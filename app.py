@@ -5,13 +5,9 @@ import time
 import io
 from PIL import Image
 import plotly.express as px
-import extra_streamlit_components as stx
 
 # Page Configuration for Mobile
 st.set_page_config(page_title="Heli Snag Tracker", page_icon="🚁", layout="wide")
-
-# Initialize Cookie Manager directly (No @st.cache_resource decorator to avoid CachedWidgetWarning)
-cookie_manager = stx.CookieManager()
 
 # Initialize Supabase Connection
 @st.cache_resource
@@ -33,7 +29,7 @@ def get_authorized_engineers():
     return []
 
 # ---------------------------------------------------------
-# INITIAL SESSION STATE & COOKIE RETRIEVAL
+# INITIAL SESSION STATE & QUERY PARAMETER LOGIN RETRIEVAL
 # ---------------------------------------------------------
 if "engineer_name" not in st.session_state:
     st.session_state["engineer_name"] = ""
@@ -42,8 +38,8 @@ if "user_authenticated" not in st.session_state:
 if "switch_user_mode" not in st.session_state:
     st.session_state["switch_user_mode"] = False
 
-# Read saved engineer name from device cookie
-saved_user = cookie_manager.get(cookie="heli_snag_remembered_user")
+# Fetch remembered user directly from Streamlit URL Query Params
+saved_user = st.query_params.get("remembered_user", None)
 
 try:
     SITE_USER_PASSWORD = st.secrets["USER_PASSWORD"]
@@ -58,7 +54,7 @@ if not st.session_state["user_authenticated"]:
     st.title("🚁 Helicopter Live Snag Log")
     authorized_list = get_authorized_engineers()
 
-    # SCENARIO A: Device remembers engineer name -> Ask Password Only
+    # SCENARIO A: Saved engineer remembered -> Ask Password Only
     if saved_user and not st.session_state["switch_user_mode"]:
         st.info(f"👋 Welcome back! Are you **{saved_user}**?")
 
@@ -110,14 +106,10 @@ if not st.session_state["user_authenticated"]:
                     st.session_state["user_authenticated"] = True
                     st.session_state["switch_user_mode"] = False
 
-                    # Save remembered engineer name to cookie
+                    # Store remembered engineer in query parameters
                     if remember_me:
-                        cookie_manager.set(
-                            cookie="heli_snag_remembered_user",
-                            val=target_name,
-                            key="set_remembered_user",
-                            expires_at=pd.Timestamp.now() + pd.Timedelta(days=60)
-                        )
+                        st.query_params["remembered_user"] = target_name
+
                     st.rerun()
 
         if saved_user and st.session_state["switch_user_mode"]:
@@ -174,6 +166,9 @@ if st.sidebar.button("Log Out / Switch Engineer"):
     st.session_state["engineer_name"] = ""
     st.session_state["user_authenticated"] = False
     st.session_state["switch_user_mode"] = True
+    # Clear remembered query param on logout
+    if "remembered_user" in st.query_params:
+        del st.query_params["remembered_user"]
     st.rerun()
 
 st.sidebar.markdown("---")
