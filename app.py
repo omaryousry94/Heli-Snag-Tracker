@@ -18,23 +18,23 @@ supabase = init_supabase()
 
 st.title("🚁 Helicopter Live Snag Log")
 
-# Sidebar - User Info & Quick Filters
-st.sidebar.header("Engineer Details")
-current_engineer = st.sidebar.text_input("Your Name / ID", value="Engineer")
+# Helper function to fetch live fleet tail numbers from Supabase
+def get_fleet_tail_numbers():
+    try:
+        res = supabase.table("fleet").select("tail_number").order("id").execute()
+        if res.data:
+            return [row["tail_number"] for row in res.data]
+    except Exception:
+        pass
+    # Fallback default fleet list
+    return [
+        "AW139 - Reg 01", "AW139 - Reg 02",
+        "AW169 - Reg 01", "AW169 - Reg 02",
+        "B412 - Reg 01", "B412 - Reg 02"
+    ]
 
-st.sidebar.markdown("---")
-st.sidebar.header("Filter Snags")
-status_filter = st.sidebar.multiselect("Status", ["Open", "In Progress", "Deferred", "Closed"], default=["Open", "In Progress", "Deferred"])
-
-# Defined Fleet List
-FLEET_TAIL_NUMBERS = [
-    "AW139 - Reg 01",
-    "AW139 - Reg 02",
-    "AW169 - Reg 01",
-    "AW169 - Reg 02",
-    "B412 - Reg 01",
-    "B412 - Reg 02"
-]
+# Fetch dynamic fleet list
+FLEET_TAIL_NUMBERS = get_fleet_tail_numbers()
 
 # Defined System / ATA Chapters
 ATA_CHAPTERS = [
@@ -48,7 +48,15 @@ ATA_CHAPTERS = [
     "Flight Controls"
 ]
 
-# Navigation Tabs (Now including Admin)
+# Sidebar - User Info & Quick Filters
+st.sidebar.header("Engineer Details")
+current_engineer = st.sidebar.text_input("Your Name / ID", value="Engineer")
+
+st.sidebar.markdown("---")
+st.sidebar.header("Filter Snags")
+status_filter = st.sidebar.multiselect("Status", ["Open", "In Progress", "Deferred", "Closed"], default=["Open", "In Progress", "Deferred"])
+
+# Navigation Tabs
 tab1, tab2, tab3, tab4 = st.tabs(["📋 Dashboard", "➕ Log New Snag", "✏️ Update Snag", "🔒 Admin Controls"])
 
 # ---------------------------------------------------------
@@ -208,12 +216,11 @@ with tab3:
         st.info("No active open snags available to update.")
 
 # ---------------------------------------------------------
-# TAB 4: ADMIN CONTROLS (PASSWORD PROTECTED)
+# TAB 4: ADMIN CONTROLS (FLEET MANAGEMENT & PURGING)
 # ---------------------------------------------------------
 with tab4:
     st.subheader("Admin Access Required")
 
-    # Check if ADMIN_PASSWORD is set in Streamlit Secrets
     try:
         admin_secret = st.secrets["ADMIN_PASSWORD"]
     except KeyError:
@@ -225,33 +232,67 @@ with tab4:
     if admin_password == admin_secret:
         st.success("Admin Access Granted")
         st.markdown("---")
-        st.write("### Manage Database")
 
-        response = supabase.table("snags").select("*").execute()
-        all_snags = response.data
+        admin_sub1, admin_sub2 = st.tabs(["🚁 Fleet Management", "🗑️ Delete / Force Close Snags"])
 
-        if all_snags:
-            admin_snag_options = {f"ID #{s['id']} [{s['status']}] - {s['aircraft']}: {s['description'][:30]}...": s for s in all_snags}
-            del_selected_label = st.selectbox("Select Snag to Manage", list(admin_snag_options.keys()))
-            admin_selected_snag = admin_snag_options[del_selected_label]
+        # --- SUBTAB 1: FLEET MANAGEMENT ---
+        with admin_sub1:
+            st.write("### Manage Fleet Registrations / Tail Numbers")
 
-            del_col1, del_col2 = st.columns(2)
+            col_add, col_rem = st.columns(2)
 
-            with del_col1:
-                # Button to permanently delete a row from the database
-                if st.button("❌ Permanently Delete Record"):
-                    supabase.table("snags").delete().eq("id", admin_selected_snag['id']).execute()
-                    st.warning(f"Snag ID #{admin_selected_snag['id']} has been permanently deleted from the database.")
-                    st.rerun()
+            with col_add:
+                st.markdown("#### Add New Helicopter")
+                new_tail = st.text_input("Enter Tail Number / Registration", placeholder="e.g. AW139 - Reg 03")
+                if st.button("➕ Add to Fleet"):
+                    if new_tail.strip():
+                        try:
+                            supabase.table("fleet").insert({"tail_number": new_tail.strip()}).execute()
+                            st.success(f"Added {new_tail.strip()} to fleet!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error adding tail number: {e}")
+                    else:
+                        st.warning("Please type a valid tail number.")
 
-            with del_col2:
-                # Quick button to force-close a snag without a resolution form
-                if st.button("✅ Force Close Snag"):
-                    supabase.table("snags").update({"status": "Closed"}).eq("id", admin_selected_snag['id']).execute()
-                    st.success(f"Snag ID #{admin_selected_snag['id']} forced to Closed status.")
-                    st.rerun()
-        else:
-            st.info("The database is currently empty.")
+            with col_rem:
+                st.markdown("#### Remove Helicopter")
+                tail_to_remove = st.selectbox("Select Tail Number to Remove", FLEET_TAIL_NUMBERS)
+                if st.button("❌ Remove from Fleet"):
+                    try:
+                        supabase.table("fleet").delete().eq("tail_number", tail_to_remove).execute()
+                        st.warning(f"Removed {tail_to_remove} from active fleet!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error removing tail number: {e}")
+
+        # --- SUBTAB 2: DELETE / FORCE CLOSE SNAGS ---
+        with admin_sub2:
+            st.write("### Manage Database Records")
+
+            response = supabase.table("snags").select("*").execute()
+            all_snags = response.data
+
+            if all_snags:
+                admin_snag_options = {f"ID #{s['id']} [{s['status']}] - {s['aircraft']}: {s['description'][:30]}...": s for s in all_snags}
+                del_selected_label = st.selectbox("Select Snag Record", list(admin_snag_options.keys()))
+                admin_selected_snag = admin_snag_options[del_selected_label]
+
+                del_col1, del_col2 = st.columns(2)
+
+                with del_col1:
+                    if st.button("❌ Permanently Delete Record"):
+                        supabase.table("snags").delete().eq("id", admin_selected_snag['id']).execute()
+                        st.warning(f"Snag ID #{admin_selected_snag['id']} deleted from database.")
+                        st.rerun()
+
+                with del_col2:
+                    if st.button("✅ Force Close Snag"):
+                        supabase.table("snags").update({"status": "Closed"}).eq("id", admin_selected_snag['id']).execute()
+                        st.success(f"Snag ID #{admin_selected_snag['id']} forced to Closed status.")
+                        st.rerun()
+            else:
+                st.info("The database is currently empty.")
 
     elif admin_password != "":
         st.error("Incorrect Password.")
