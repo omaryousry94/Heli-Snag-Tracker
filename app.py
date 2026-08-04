@@ -186,7 +186,6 @@ with tab1:
     with header_col1:
         st.subheader("Current Fleet Status")
     with header_col2:
-        # FEATURE 1: DASHBOARD REFRESH BUTTON
         if st.button("🔄 Refresh Live Data", use_container_width=True):
             st.rerun()
 
@@ -219,7 +218,6 @@ with tab1:
             open_count = len(df[df['status'] == 'Open'])
             st.metric(label="Open / Active Snags (Filtered)", value=open_count)
 
-            # Reordered table view with created_at at the end
             display_df = df[['id', 'aircraft', 'system', 'status', 'engineer', 'description', 'image_url', 'resolution', 'created_at']]
             st.dataframe(
                 display_df,
@@ -228,7 +226,6 @@ with tab1:
                 hide_index=True
             )
 
-            # FEATURE 3: SELECT ONLY ONE SPECIFIC SNAG TO VIEW ITS PHOTO
             st.markdown("---")
             with st.expander("🖼️ Inspect Photo Attachment"):
                 snags_with_photos = [
@@ -286,7 +283,6 @@ with tab1:
 with tab2:
     st.subheader("Report a Defect")
 
-    # FEATURE 2: DISPLAY SUCCESS CONFIRMATION MSG AFTER ADDING A SNAG
     if st.session_state["snag_added_success_msg"]:
         st.success(st.session_state["snag_added_success_msg"])
         st.session_state["snag_added_success_msg"] = None  # Clear after display
@@ -330,7 +326,6 @@ with tab2:
                 }
                 supabase.table("snags").insert(new_entry).execute()
 
-                # Set persistent success message for rerender
                 st.session_state["snag_added_success_msg"] = f"✅ Snag successfully recorded and saved for {aircraft}!"
                 st.rerun()
 
@@ -483,7 +478,7 @@ with tab5:
         st.success("Admin Access Granted")
         st.markdown("---")
 
-        admin_sub1, admin_sub2, admin_sub3 = st.tabs(["👨‍🔧 Engineer User Control", "🚁 Fleet Management", "🗑️ Delete / Force Close Snags"])
+        admin_sub1, admin_sub2, admin_sub3 = st.tabs(["👨‍🔧 Engineer User Control", "🚁 Fleet Management", "🗑️ Bulk Delete / Force Close Snags"])
 
         with admin_sub1:
             st.write("### Manage Authorized Engineers List")
@@ -549,27 +544,42 @@ with tab5:
                     except Exception as e:
                         st.error(f"Error removing tail number: {e}")
 
+        # MULTI-SELECT BULK DELETE / CLOSE
         with admin_sub3:
-            st.write("### Manage Database Records")
-            response = supabase.table("snags").select("*").execute()
+            st.write("### Bulk Manage Database Records")
+            response = supabase.table("snags").select("*").order("id", desc=True).execute()
             all_snags = response.data
 
             if all_snags:
-                admin_snag_options = {f"ID #{s['id']} [{s['status']}] - {s['aircraft']}: {s['description'][:30]}...": s for s in all_snags}
-                del_selected_label = st.selectbox("Select Snag Record", list(admin_snag_options.keys()))
-                admin_selected_snag = admin_snag_options[del_selected_label]
+                st.info("Select one or multiple snag records below to perform bulk actions.")
+                admin_snag_map = {
+                    f"ID #{s['id']} [{s['status']}] - {s['aircraft']}: {s['description'][:35]}...": s['id']
+                    for s in all_snags
+                }
 
-                del_col1, del_col2 = st.columns(2)
-                with del_col1:
-                    if st.button("❌ Permanently Delete Record"):
-                        supabase.table("snags").delete().eq("id", admin_selected_snag['id']).execute()
-                        st.warning(f"Snag ID #{admin_selected_snag['id']} deleted from database.")
-                        st.rerun()
-                with del_col2:
-                    if st.button("✅ Force Close Snag"):
-                        supabase.table("snags").update({"status": "Closed"}).eq("id", admin_selected_snag['id']).execute()
-                        st.success(f"Snag ID #{admin_selected_snag['id']} forced to Closed status.")
-                        st.rerun()
+                selected_labels = st.multiselect(
+                    "Select Snag Records:",
+                    options=list(admin_snag_map.keys()),
+                    placeholder="Choose snags to modify or delete..."
+                )
+
+                if selected_labels:
+                    selected_ids = [admin_snag_map[lbl] for lbl in selected_labels]
+                    st.write(f"**Selected {len(selected_ids)} snag(s)** (IDs: {', '.join(map(str, selected_ids))})")
+
+                    del_col1, del_col2 = st.columns(2)
+                    with del_col1:
+                        if st.button(f"❌ Delete {len(selected_ids)} Selected Record(s)", use_container_width=True):
+                            supabase.table("snags").delete().in_("id", selected_ids).execute()
+                            st.warning(f"Deleted {len(selected_ids)} snag record(s) from database.")
+                            st.rerun()
+                    with del_col2:
+                        if st.button(f"✅ Force Close {len(selected_ids)} Selected Record(s)", use_container_width=True):
+                            supabase.table("snags").update({"status": "Closed"}).in_("id", selected_ids).execute()
+                            st.success(f"Force-closed {len(selected_ids)} snag record(s).")
+                            st.rerun()
+                else:
+                    st.caption("No snags selected yet. Click the box above to choose records.")
             else:
                 st.info("The database is currently empty.")
 
