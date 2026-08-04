@@ -5,7 +5,7 @@ import time
 import io
 from PIL import Image
 import plotly.express as px
-from streamlit_js_eval import streamlit_js_eval, set_key, get_key
+from streamlit_js_eval import streamlit_js_eval
 
 # Page Configuration for Mobile
 st.set_page_config(page_title="Heli Snag Tracker", page_icon="🚁", layout="wide")
@@ -39,8 +39,12 @@ if "user_authenticated" not in st.session_state:
 if "switch_user_mode" not in st.session_state:
     st.session_state["switch_user_mode"] = False
 
-# Read remembered engineer name directly from Browser / App LocalStorage
-saved_user = get_key("heli_snag_remembered_user")
+# Read remembered engineer directly from Browser/Home-Screen LocalStorage
+saved_user = streamlit_js_eval(
+    js_expressions="localStorage.getItem('heli_snag_remembered_user')",
+    key="get_saved_user",
+    want_output=True
+)
 
 try:
     SITE_USER_PASSWORD = st.secrets["USER_PASSWORD"]
@@ -56,7 +60,7 @@ if not st.session_state["user_authenticated"]:
     authorized_list = get_authorized_engineers()
 
     # SCENARIO A: LocalStorage remembers engineer -> Ask Password Only
-    if saved_user and not st.session_state["switch_user_mode"]:
+    if saved_user and str(saved_user).strip() and str(saved_user) != "None" and not st.session_state["switch_user_mode"]:
         st.info(f"👋 Welcome back! Are you **{saved_user}**?")
 
         with st.form("quick_login_form"):
@@ -109,7 +113,10 @@ if not st.session_state["user_authenticated"]:
 
                     # Store remembered engineer in persistent LocalStorage
                     if remember_me:
-                        set_key("heli_snag_remembered_user", target_name)
+                        streamlit_js_eval(
+                            js_expressions=f"localStorage.setItem('heli_snag_remembered_user', '{target_name}')",
+                            key="set_saved_user"
+                        )
 
                     st.rerun()
 
@@ -167,8 +174,10 @@ if st.sidebar.button("Log Out / Switch Engineer"):
     st.session_state["engineer_name"] = ""
     st.session_state["user_authenticated"] = False
     st.session_state["switch_user_mode"] = True
-    # Clear local storage key on manual log out
-    set_key("heli_snag_remembered_user", "")
+    streamlit_js_eval(
+        js_expressions="localStorage.removeItem('heli_snag_remembered_user')",
+        key="remove_saved_user"
+    )
     st.rerun()
 
 st.sidebar.markdown("---")
