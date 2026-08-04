@@ -3,6 +3,7 @@ from supabase import create_client, Client
 import pandas as pd
 import time
 import io
+from PIL import Image
 
 # Page Configuration for Mobile
 st.set_page_config(page_title="Heli Snag Tracker", page_icon="🚁", layout="wide")
@@ -18,6 +19,17 @@ supabase = init_supabase()
 
 st.title("🚁 Helicopter Live Snag Log")
 
+# Helper function to compress and resize uploaded photos
+def compress_image(uploaded_file, max_size=(1024, 1024), quality=75):
+    """Resizes and compresses image to ~100-300KB for fast field uploads."""
+    image = Image.open(uploaded_file)
+    if image.mode in ("RGBA", "P"):
+        image = image.convert("RGB")
+    image.thumbnail(max_size)
+    output_buffer = io.BytesIO()
+    image.save(output_buffer, format="JPEG", quality=quality, optimize=True)
+    return output_buffer.getvalue()
+
 # Helper function to fetch live fleet tail numbers from Supabase
 def get_fleet_tail_numbers():
     try:
@@ -26,17 +38,14 @@ def get_fleet_tail_numbers():
             return [row["tail_number"] for row in res.data]
     except Exception:
         pass
-    # Fallback default fleet list
     return [
         "AW139 - Reg 01", "AW139 - Reg 02",
         "AW169 - Reg 01", "AW169 - Reg 02",
         "B412 - Reg 01", "B412 - Reg 02"
     ]
 
-# Fetch dynamic fleet list
 FLEET_TAIL_NUMBERS = get_fleet_tail_numbers()
 
-# Defined System / ATA Chapters
 ATA_CHAPTERS = [
     "Airframe / Structure",
     "Engine / Powerplant",
@@ -141,7 +150,7 @@ with tab1:
         st.info("No snags recorded yet.")
 
 # ---------------------------------------------------------
-# TAB 2: LOG NEW SNAG
+# TAB 2: LOG NEW SNAG (AUTO-COMPRESSING PHOTO UPLOAD)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("Report a Defect")
@@ -165,9 +174,15 @@ with tab2:
             else:
                 image_url = None
                 if uploaded_file is not None:
-                    file_bytes = uploaded_file.read()
-                    file_path = f"snag_{int(time.time())}_{uploaded_file.name}"
-                    supabase.storage.from_("snag-photos").upload(file_path, file_bytes)
+                    # Compress and resize photo automatically
+                    compressed_bytes = compress_image(uploaded_file, max_size=(1024, 1024), quality=75)
+                    file_path = f"snag_{int(time.time())}.jpg"
+
+                    supabase.storage.from_("snag-photos").upload(
+                        path=file_path,
+                        file=compressed_bytes,
+                        file_options={"content-type": "image/jpeg"}
+                    )
                     image_url = supabase.storage.from_("snag-photos").get_public_url(file_path)
 
                 new_entry = {
