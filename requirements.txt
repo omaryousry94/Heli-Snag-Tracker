@@ -4,4 +4,4 @@ pandas
 openpyxl
 Pillow
 plotly
-extra-streamlit-components
+streamlit-js-eval
