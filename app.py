@@ -29,7 +29,7 @@ def get_authorized_engineers():
     return []
 
 # ---------------------------------------------------------
-# INITIAL SESSION STATE & QUERY PARAMETER LOGIN RETRIEVAL
+# INITIAL SESSION STATE & NAVIGATION MANAGEMENT
 # ---------------------------------------------------------
 if "engineer_name" not in st.session_state:
     st.session_state["engineer_name"] = ""
@@ -37,6 +37,8 @@ if "user_authenticated" not in st.session_state:
     st.session_state["user_authenticated"] = False
 if "switch_user_mode" not in st.session_state:
     st.session_state["switch_user_mode"] = False
+if "selected_snag_to_update" not in st.session_state:
+    st.session_state["selected_snag_to_update"] = None
 
 # Fetch remembered user directly from Streamlit URL Query Params
 saved_user = st.query_params.get("remembered_user", None)
@@ -106,7 +108,6 @@ if not st.session_state["user_authenticated"]:
                     st.session_state["user_authenticated"] = True
                     st.session_state["switch_user_mode"] = False
 
-                    # Store remembered engineer in query parameters
                     if remember_me:
                         st.query_params["remembered_user"] = target_name
 
@@ -166,7 +167,6 @@ if st.sidebar.button("Log Out / Switch Engineer"):
     st.session_state["engineer_name"] = ""
     st.session_state["user_authenticated"] = False
     st.session_state["switch_user_mode"] = True
-    # Clear remembered query param on logout
     if "remembered_user" in st.query_params:
         del st.query_params["remembered_user"]
     st.rerun()
@@ -213,13 +213,36 @@ with tab1:
             open_count = len(df[df['status'] == 'Open'])
             st.metric(label="Open / Active Snags (Filtered)", value=open_count)
 
-            display_df = df[['id', 'created_at', 'aircraft', 'system', 'status', 'engineer', 'description', 'image_url', 'resolution']]
+            # REORDER COLUMNS: created_at moved to the end
+            display_df = df[['id', 'aircraft', 'system', 'status', 'engineer', 'description', 'image_url', 'resolution', 'created_at']]
             st.dataframe(
                 display_df,
                 column_config={"image_url": st.column_config.LinkColumn("Photo", display_text="View Photo")},
                 use_container_width=True,
                 hide_index=True
             )
+
+            # QUICK ACTION: SELECT A SNAG TO UPDATE DIRECTLY
+            st.markdown("---")
+            st.markdown("#### ⚡ Direct Actions")
+            active_only_df = df[df['status'] != 'Closed']
+
+            if not active_only_df.empty:
+                quick_update_options = {
+                    f"ID #{s['id']} | [{s['aircraft']}] [{s['system']}] - {s['description'][:40]}...": s['id']
+                    for s in active_only_df.to_dict('records')
+                }
+
+                c_sel, c_btn = st.columns([3, 1])
+                with c_sel:
+                    selected_dash_snag_label = st.selectbox("Select Active Snag to Update", list(quick_update_options.keys()))
+                with c_btn:
+                    st.write("") # Alignment spacing
+                    st.write("")
+                    if st.button("✏️ Go to Update Page", use_container_width=True):
+                        st.session_state["selected_snag_to_update"] = quick_update_options[selected_dash_snag_label]
+                        st.info("Redirecting to Update tab...")
+                        st.rerun()
 
             with st.expander("🖼️ View Photos of Selected Snags"):
                 snags_with_photos = [
@@ -319,6 +342,9 @@ with tab3:
     active_snags = response.data
 
     if active_snags:
+        # Check if user arrived via Quick Redirect from Dashboard
+        preselected_snag_id = st.session_state.get("selected_snag_to_update", None)
+
         st.markdown("#### 1. Filter Snag Location")
         filter_col1, filter_col2 = st.columns(2)
 
@@ -342,7 +368,16 @@ with tab3:
                 f"ID #{s['id']} | [{s['aircraft']}] [{s['system']}] - {s['description'][:35]}...": s
                 for s in filtered_active
             }
-            selected_label = st.selectbox("Select Snag to Update", list(snag_options.keys()))
+
+            # Auto-calculate default index if pre-selected from Dashboard
+            default_index = 0
+            if preselected_snag_id:
+                for idx, (lbl, s_obj) in enumerate(snag_options.items()):
+                    if s_obj['id'] == preselected_snag_id:
+                        default_index = idx
+                        break
+
+            selected_label = st.selectbox("Select Snag to Update", list(snag_options.keys()), index=default_index)
             selected_snag = snag_options[selected_label]
 
             with st.form("update_snag_form"):
@@ -367,6 +402,9 @@ with tab3:
                         "status": new_status,
                         "resolution": resolution
                     }).eq("id", selected_snag['id']).execute()
+
+                    # Reset pre-selection state
+                    st.session_state["selected_snag_to_update"] = None
                     st.success(f"Snag ID #{selected_snag['id']} updated successfully!")
                     st.rerun()
         else:
@@ -386,7 +424,6 @@ with tab4:
     if all_data:
         df_analytics = pd.DataFrame(all_data)
 
-        # High-level summary metrics
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Recorded Snags", len(df_analytics))
         m2.metric("Open Snags", len(df_analytics[df_analytics['status'] == 'Open']))
@@ -395,7 +432,6 @@ with tab4:
 
         st.markdown("---")
 
-        # Chart Layout Row 1
         col_chart1, col_chart2 = st.columns(2)
 
         with col_chart1:
@@ -428,7 +464,6 @@ with tab4:
 
         st.markdown("---")
 
-        # Chart Layout Row 2
         st.markdown("#### Fleet Defect Matrix (A/C vs ATA Chapter)")
         pivot_df = df_analytics.pivot_table(index='system', columns='aircraft', aggfunc='size', fill_value=0)
         fig_heat = px.imshow(
