@@ -17,8 +17,18 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
+# Helper function to fetch authorized engineers list
+def get_authorized_engineers():
+    try:
+        res = supabase.table("authorized_engineers").select("engineer_name").order("engineer_name").execute()
+        if res.data:
+            return [row["engineer_name"] for row in res.data]
+    except Exception:
+        pass
+    return []
+
 # ---------------------------------------------------------
-# INITIAL SESSION STATE: REQUIRE NAME & PASSWORD ON STARTUP
+# INITIAL SESSION STATE: REQUIRE AUTHORIZED LOGIN ON STARTUP
 # ---------------------------------------------------------
 if "engineer_name" not in st.session_state:
     st.session_state["engineer_name"] = ""
@@ -35,22 +45,44 @@ except KeyError:
 # Prompt for Login Details if not authenticated
 if not st.session_state["user_authenticated"]:
     st.title("🚁 Helicopter Live Snag Log")
-    st.info("👋 Welcome! Please enter your details and site password to log in.")
+    st.info("👋 Welcome! Select your authorized engineer profile and enter the site password.")
+
+    authorized_list = get_authorized_engineers()
+
+    if not authorized_list:
+        st.warning("No authorized engineers found in the database. Please add engineers using Admin Controls or check your database connection.")
 
     with st.form("user_login_form"):
-        input_name = st.text_input("Engineer Name / ID", placeholder="e.g., John Doe / ENG-102")
+        if authorized_list:
+            selected_name = st.selectbox("Select Engineer Profile", authorized_list)
+        else:
+            selected_name = st.text_input("Engineer Name / ID", placeholder="e.g. John Doe")
+
         input_pass = st.text_input("Site Access Password", type="password")
         submit_login = st.form_submit_button("Log In")
 
         if submit_login:
-            if not input_name.strip():
-                st.error("Please enter a valid name or ID.")
-            elif input_pass != SITE_USER_PASSWORD:
+            clean_name = selected_name.strip() if selected_name else ""
+            clean_pass = input_pass.strip()
+
+            if not clean_name:
+                st.error("Please select or enter a valid Engineer Name.")
+            elif clean_pass != SITE_USER_PASSWORD.strip():
                 st.error("Incorrect Site Access Password.")
             else:
-                st.session_state["engineer_name"] = input_name.strip()
-                st.session_state["user_authenticated"] = True
-                st.rerun()
+                # Case-insensitive validation against authorized list
+                if authorized_list:
+                    auth_lower_map = {name.lower(): name for name in authorized_list}
+                    if clean_name.lower() in auth_lower_map:
+                        st.session_state["engineer_name"] = auth_lower_map[clean_name.lower()]
+                        st.session_state["user_authenticated"] = True
+                        st.rerun()
+                    else:
+                        st.error("Access Denied: Your name is not on the authorized engineers list.")
+                else:
+                    st.session_state["engineer_name"] = clean_name.title()
+                    st.session_state["user_authenticated"] = True
+                    st.rerun()
 
     st.stop()  # Halts further rendering until authenticated
 
@@ -249,7 +281,6 @@ with tab2:
 with tab3:
     st.subheader("Update Existing Snag Status")
 
-    # Fetch all non-closed active snags
     response = supabase.table("snags").select("*").neq("status", "Closed").order("id", desc=True).execute()
     active_snags = response.data
 
@@ -263,7 +294,6 @@ with tab3:
         with filter_col2:
             selected_ata_filter = st.selectbox("Filter by ATA Chapter", ["All ATA Chapters"] + ATA_CHAPTERS)
 
-        # Apply filters
         filtered_active = active_snags
         if selected_ac_filter != "All Aircraft":
             filtered_active = [s for s in filtered_active if s.get("aircraft") == selected_ac_filter]
@@ -328,9 +358,47 @@ with tab4:
         st.success("Admin Access Granted")
         st.markdown("---")
 
-        admin_sub1, admin_sub2 = st.tabs(["🚁 Fleet Management", "🗑️ Delete / Force Close Snags"])
+        admin_sub1, admin_sub2, admin_sub3 = st.tabs(["👨‍🔧 Engineer User Control", "🚁 Fleet Management", "🗑️ Delete / Force Close Snags"])
 
+        # SUB-TAB 1: MANAGING AUTHORIZED ENGINEERS
         with admin_sub1:
+            st.write("### Manage Authorized Engineers List")
+            eng_col_add, eng_col_rem = st.columns(2)
+
+            curr_engineers = get_authorized_engineers()
+
+            with eng_col_add:
+                st.markdown("#### Authorize New Engineer")
+                new_eng_name = st.text_input("Engineer Full Name / ID", placeholder="e.g. John Doe / ENG-102")
+                if st.button("➕ Grant Access"):
+                    if new_eng_name.strip():
+                        # Format name cleanly into title case before saving
+                        formatted_name = new_eng_name.strip().title()
+                        try:
+                            supabase.table("authorized_engineers").insert({"engineer_name": formatted_name}).execute()
+                            st.success(f"Added '{formatted_name}' to authorized engineers!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error adding engineer (might already exist): {e}")
+                    else:
+                        st.warning("Please enter a valid engineer name.")
+
+            with eng_col_rem:
+                st.markdown("#### Revoke Engineer Access")
+                if curr_engineers:
+                    eng_to_remove = st.selectbox("Select Engineer to Revoke Access", curr_engineers)
+                    if st.button("❌ Revoke Access"):
+                        try:
+                            supabase.table("authorized_engineers").delete().eq("engineer_name", eng_to_remove).execute()
+                            st.warning(f"Revoked access for '{eng_to_remove}'.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error revoking access: {e}")
+                else:
+                    st.info("No authorized engineers in the list.")
+
+        # SUB-TAB 2: MANAGING FLEET
+        with admin_sub2:
             st.write("### Manage Fleet Registrations / Tail Numbers")
             col_add, col_rem = st.columns(2)
 
@@ -359,7 +427,8 @@ with tab4:
                     except Exception as e:
                         st.error(f"Error removing tail number: {e}")
 
-        with admin_sub2:
+        # SUB-TAB 3: MANAGING RECORDS
+        with admin_sub3:
             st.write("### Manage Database Records")
             response = supabase.table("snags").select("*").execute()
             all_snags = response.data
