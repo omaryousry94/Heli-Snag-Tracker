@@ -156,7 +156,10 @@ with tab1:
             )
 
             with st.expander("🖼️ View Photos of Selected Snags"):
-                snags_with_photos = [s for s in df.to_dict('records') if s.get('image_url')]
+                snags_with_photos = [
+                    s for s in df.to_dict('records')
+                    if s.get('image_url') and pd.notna(s.get('image_url')) and str(s.get('image_url')).strip() != ""
+                ]
                 if snags_with_photos:
                     for s in snags_with_photos:
                         st.caption(f"**ID #{s['id']} - {s['aircraft']}** logged by {s['engineer']}")
@@ -256,7 +259,7 @@ with tab3:
 
         with st.form("update_snag_form"):
             st.write(f"**Current Details:** {selected_snag['description']}")
-            if selected_snag.get('image_url'):
+            if selected_snag.get('image_url') and pd.notna(selected_snag.get('image_url')) and str(selected_snag.get('image_url')).strip() != "":
                 st.image(selected_snag['image_url'], width=250)
 
             new_status = st.selectbox("New Status", ["Open", "In Progress", "Deferred", "Closed"], index=["Open", "In Progress", "Deferred", "Closed"].index(selected_snag['status']))
