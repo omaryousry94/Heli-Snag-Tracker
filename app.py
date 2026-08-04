@@ -4,9 +4,14 @@ import pandas as pd
 import time
 import io
 from PIL import Image
+import plotly.express as px
 
 # Page Configuration for Mobile
 st.set_page_config(page_title="Heli Snag Tracker", page_icon="🚁", layout="wide")
+
+# Initialize Theme Toggle Session State
+if "theme_mode" not in st.session_state:
+    st.session_state["theme_mode"] = "Dark"
 
 # Initialize Supabase Connection
 @st.cache_resource
@@ -35,12 +40,52 @@ if "engineer_name" not in st.session_state:
 if "user_authenticated" not in st.session_state:
     st.session_state["user_authenticated"] = False
 
-# Fetch the predefined site password from secrets
 try:
     SITE_USER_PASSWORD = st.secrets["USER_PASSWORD"]
 except KeyError:
     st.error("Site User Password not configured. Please add 'USER_PASSWORD' to your Streamlit Secrets.")
     st.stop()
+
+# ---------------------------------------------------------
+# THEME TOGGLE SIDEBAR CONTROLS & STYLING INJECTION
+# ---------------------------------------------------------
+with st.sidebar:
+    st.header("⚙️ Preferences")
+    theme_choice = st.radio("Display Theme", ["Dark", "Light"], index=0 if st.session_state["theme_mode"] == "Dark" else 1, horizontal=True)
+    st.session_state["theme_mode"] = theme_choice
+    st.markdown("---")
+
+if st.session_state["theme_mode"] == "Light":
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-color: #F8F9FA !important;
+            color: #212529 !important;
+        }
+        header[data-testid="stHeader"] {
+            background-color: #F8F9FA !important;
+        }
+        section[data-testid="stSidebar"] {
+            background-color: #E9ECEF !important;
+        }
+        .stMarkdown, p, h1, h2, h3, h4, h5, h6, label, span {
+            color: #212529 !important;
+        }
+        div[data-baseweb="input"], div[data-baseweb="select"], textarea {
+            background-color: #FFFFFF !important;
+            color: #212529 !important;
+            border: 1px solid #CED4DA !important;
+        }
+        .stDataFrame, div[data-testid="stMetricValue"] {
+            background-color: #FFFFFF !important;
+            border-radius: 8px;
+            padding: 8px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 # Prompt for Login Details if not authenticated
 if not st.session_state["user_authenticated"]:
@@ -50,7 +95,6 @@ if not st.session_state["user_authenticated"]:
     authorized_list = get_authorized_engineers()
 
     with st.form("user_login_form"):
-        # Write input box for Engineer Name instead of selectbox
         input_name = st.text_input("Engineer Name / ID", placeholder="e.g. John Doe / ENG-102")
         input_pass = st.text_input("Site Access Password", type="password")
         submit_login = st.form_submit_button("Log In")
@@ -64,7 +108,6 @@ if not st.session_state["user_authenticated"]:
             elif clean_pass != SITE_USER_PASSWORD.strip():
                 st.error("Incorrect Site Access Password.")
             else:
-                # Case-insensitive validation against authorized list if database populated
                 if authorized_list:
                     auth_lower_map = {name.lower(): name for name in authorized_list}
                     if clean_name.lower() in auth_lower_map:
@@ -81,13 +124,11 @@ if not st.session_state["user_authenticated"]:
     st.stop()  # Halts further rendering until authenticated
 
 # ---------------------------------------------------------
-# MAIN APP (Renders once user is authenticated)
+# MAIN APP
 # ---------------------------------------------------------
 st.title("🚁 Helicopter Live Snag Log")
 
-# Helper function to compress and resize uploaded photos
 def compress_image(uploaded_file, max_size=(1024, 1024), quality=75):
-    """Resizes and compresses image to ~100-300KB for fast field uploads."""
     image = Image.open(uploaded_file)
     if image.mode in ("RGBA", "P"):
         image = image.convert("RGB")
@@ -96,7 +137,6 @@ def compress_image(uploaded_file, max_size=(1024, 1024), quality=75):
     image.save(output_buffer, format="JPEG", quality=quality, optimize=True)
     return output_buffer.getvalue()
 
-# Helper function to fetch live fleet tail numbers from Supabase
 def get_fleet_tail_numbers():
     try:
         res = supabase.table("fleet").select("tail_number").order("id").execute()
@@ -135,8 +175,8 @@ st.sidebar.markdown("---")
 st.sidebar.header("Filter Snags")
 status_filter = st.sidebar.multiselect("Status", ["Open", "In Progress", "Deferred", "Closed"], default=["Open", "In Progress", "Deferred"])
 
-# Navigation Tabs
-tab1, tab2, tab3, tab4 = st.tabs(["📋 Dashboard", "➕ Log New Snag", "✏️ Update Snag", "🔒 Admin Controls"])
+# Navigation Tabs (Now including Analytics)
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Dashboard", "📊 Analytics", "➕ Log New Snag", "✏️ Update Snag", "🔒 Admin Controls"])
 
 # ---------------------------------------------------------
 # TAB 1: LIVE DASHBOARD & EXPORT
@@ -223,9 +263,81 @@ with tab1:
         st.info("No snags recorded yet.")
 
 # ---------------------------------------------------------
-# TAB 2: LOG NEW SNAG
+# TAB 2: FLEET RELIABILITY ANALYTICS DASHBOARD
 # ---------------------------------------------------------
 with tab2:
+    st.subheader("📈 Fleet Reliability & Defect Metrics")
+
+    response_all = supabase.table("snags").select("*").execute()
+    all_data = response_all.data
+
+    if all_data:
+        df_analytics = pd.DataFrame(all_data)
+
+        # High-level summary metrics
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Recorded Snags", len(df_analytics))
+        m2.metric("Open Snags", len(df_analytics[df_analytics['status'] == 'Open']))
+        m3.metric("Deferred Snags", len(df_analytics[df_analytics['status'] == 'Deferred']))
+        m4.metric("Closed Snags", len(df_analytics[df_analytics['status'] == 'Closed']))
+
+        st.markdown("---")
+
+        # Chart Layout Row 1
+        col_chart1, col_chart2 = st.columns(2)
+
+        # Determine theme template for Plotly
+        plotly_theme = "plotly_white" if st.session_state["theme_mode"] == "Light" else "plotly_dark"
+
+        with col_chart1:
+            st.markdown("#### Defects by Aircraft Tail Number")
+            ac_counts = df_analytics.groupby(['aircraft', 'status']).size().reset_index(name='count')
+            fig_ac = px.bar(
+                ac_counts,
+                x='aircraft',
+                y='count',
+                color='status',
+                title="Snags per Helicopter (by Status)",
+                barmode='stack',
+                template=plotly_theme
+            )
+            st.plotly_chart(fig_ac, use_container_width=True)
+
+        with col_chart2:
+            st.markdown("#### System / ATA Chapter Breakdown")
+            ata_counts = df_analytics['system'].value_counts().reset_index()
+            ata_counts.columns = ['System', 'Count']
+            fig_ata = px.pie(
+                ata_counts,
+                names='System',
+                values='Count',
+                title="Distribution of Defect Systems",
+                hole=0.4,
+                template=plotly_theme
+            )
+            st.plotly_chart(fig_ata, use_container_width=True)
+
+        st.markdown("---")
+
+        # Chart Layout Row 2
+        st.markdown("#### Fleet Defect Matrix (A/C vs ATA Chapter)")
+        pivot_df = df_analytics.pivot_table(index='system', columns='aircraft', aggfunc='size', fill_value=0)
+        fig_heat = px.imshow(
+            pivot_df,
+            labels=dict(x="Aircraft Registration", y="ATA Chapter / System", color="Defect Count"),
+            title="Defect Density Heatmap",
+            color_continuous_scale="Reds",
+            template=plotly_theme
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
+
+    else:
+        st.info("No data available to build analytics charts yet.")
+
+# ---------------------------------------------------------
+# TAB 3: LOG NEW SNAG
+# ---------------------------------------------------------
+with tab3:
     st.subheader("Report a Defect")
 
     with st.form("new_snag_form", clear_on_submit=True):
@@ -270,9 +382,9 @@ with tab2:
                 st.rerun()
 
 # ---------------------------------------------------------
-# TAB 3: UPDATE SNAG (ORGANIZED BY A/C & ATA CHAPTER)
+# TAB 4: UPDATE SNAG
 # ---------------------------------------------------------
-with tab3:
+with tab4:
     st.subheader("Update Existing Snag Status")
 
     response = supabase.table("snags").select("*").neq("status", "Closed").order("id", desc=True).execute()
@@ -335,9 +447,9 @@ with tab3:
         st.info("No active open snags available to update.")
 
 # ---------------------------------------------------------
-# TAB 4: ADMIN CONTROLS
+# TAB 5: ADMIN CONTROLS
 # ---------------------------------------------------------
-with tab4:
+with tab5:
     st.subheader("Admin Access Required")
 
     try:
@@ -354,7 +466,6 @@ with tab4:
 
         admin_sub1, admin_sub2, admin_sub3 = st.tabs(["👨‍🔧 Engineer User Control", "🚁 Fleet Management", "🗑️ Delete / Force Close Snags"])
 
-        # SUB-TAB 1: MANAGING AUTHORIZED ENGINEERS
         with admin_sub1:
             st.write("### Manage Authorized Engineers List")
             eng_col_add, eng_col_rem = st.columns(2)
@@ -390,7 +501,6 @@ with tab4:
                 else:
                     st.info("No authorized engineers in the list.")
 
-        # SUB-TAB 2: MANAGING FLEET
         with admin_sub2:
             st.write("### Manage Fleet Registrations / Tail Numbers")
             col_add, col_rem = st.columns(2)
@@ -420,7 +530,6 @@ with tab4:
                     except Exception as e:
                         st.error(f"Error removing tail number: {e}")
 
-        # SUB-TAB 3: MANAGING RECORDS
         with admin_sub3:
             st.write("### Manage Database Records")
             response = supabase.table("snags").select("*").execute()
