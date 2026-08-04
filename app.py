@@ -45,32 +45,26 @@ except KeyError:
 # Prompt for Login Details if not authenticated
 if not st.session_state["user_authenticated"]:
     st.title("🚁 Helicopter Live Snag Log")
-    st.info("👋 Welcome! Select your authorized engineer profile and enter the site password.")
+    st.info("👋 Welcome! Please enter your authorized engineer name/ID and site password.")
 
     authorized_list = get_authorized_engineers()
 
-    if not authorized_list:
-        st.warning("No authorized engineers found in the database. Please add engineers using Admin Controls or check your database connection.")
-
     with st.form("user_login_form"):
-        if authorized_list:
-            selected_name = st.selectbox("Select Engineer Profile", authorized_list)
-        else:
-            selected_name = st.text_input("Engineer Name / ID", placeholder="e.g. John Doe")
-
+        # Write input box for Engineer Name instead of selectbox
+        input_name = st.text_input("Engineer Name / ID", placeholder="e.g. John Doe / ENG-102")
         input_pass = st.text_input("Site Access Password", type="password")
         submit_login = st.form_submit_button("Log In")
 
         if submit_login:
-            clean_name = selected_name.strip() if selected_name else ""
+            clean_name = input_name.strip() if input_name else ""
             clean_pass = input_pass.strip()
 
             if not clean_name:
-                st.error("Please select or enter a valid Engineer Name.")
+                st.error("Please enter a valid Engineer Name or ID.")
             elif clean_pass != SITE_USER_PASSWORD.strip():
                 st.error("Incorrect Site Access Password.")
             else:
-                # Case-insensitive validation against authorized list
+                # Case-insensitive validation against authorized list if database populated
                 if authorized_list:
                     auth_lower_map = {name.lower(): name for name in authorized_list}
                     if clean_name.lower() in auth_lower_map:
@@ -372,7 +366,6 @@ with tab4:
                 new_eng_name = st.text_input("Engineer Full Name / ID", placeholder="e.g. John Doe / ENG-102")
                 if st.button("➕ Grant Access"):
                     if new_eng_name.strip():
-                        # Format name cleanly into title case before saving
                         formatted_name = new_eng_name.strip().title()
                         try:
                             supabase.table("authorized_engineers").insert({"engineer_name": formatted_name}).execute()
