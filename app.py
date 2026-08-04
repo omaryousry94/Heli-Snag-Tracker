@@ -5,9 +5,17 @@ import time
 import io
 from PIL import Image
 import plotly.express as px
+import extra_streamlit_components as stx
 
 # Page Configuration for Mobile
 st.set_page_config(page_title="Heli Snag Tracker", page_icon="🚁", layout="wide")
+
+# Initialize Cookie Manager
+@st.cache_resource(experimental_allow_widgets=True)
+def get_cookie_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_cookie_manager()
 
 # Initialize Supabase Connection
 @st.cache_resource
@@ -29,12 +37,17 @@ def get_authorized_engineers():
     return []
 
 # ---------------------------------------------------------
-# INITIAL SESSION STATE: REQUIRE AUTHORIZED LOGIN ON STARTUP
+# INITIAL SESSION STATE & COOKIE RETRIEVAL
 # ---------------------------------------------------------
 if "engineer_name" not in st.session_state:
     st.session_state["engineer_name"] = ""
 if "user_authenticated" not in st.session_state:
     st.session_state["user_authenticated"] = False
+if "switch_user_mode" not in st.session_state:
+    st.session_state["switch_user_mode"] = False
+
+# Read saved engineer name from device cookie
+saved_user = cookie_manager.get(cookie="heli_snag_remembered_user")
 
 try:
     SITE_USER_PASSWORD = st.secrets["USER_PASSWORD"]
@@ -42,39 +55,79 @@ except KeyError:
     st.error("Site User Password not configured. Please add 'USER_PASSWORD' to your Streamlit Secrets.")
     st.stop()
 
-# Prompt for Login Details if not authenticated
+# ---------------------------------------------------------
+# LOGIN PROMPT LOGIC
+# ---------------------------------------------------------
 if not st.session_state["user_authenticated"]:
     st.title("🚁 Helicopter Live Snag Log")
-    st.info("👋 Welcome! Please enter your authorized engineer name/ID and site password.")
-
     authorized_list = get_authorized_engineers()
 
-    with st.form("user_login_form"):
-        input_name = st.text_input("Engineer Name / ID", placeholder="e.g. John Doe / ENG-102")
-        input_pass = st.text_input("Site Access Password", type="password")
-        submit_login = st.form_submit_button("Log In")
+    # SCENARIO A: Device remembers engineer name -> Ask Password Only
+    if saved_user and not st.session_state["switch_user_mode"]:
+        st.info(f"👋 Welcome back! Are you **{saved_user}**?")
 
-        if submit_login:
-            clean_name = input_name.strip() if input_name else ""
-            clean_pass = input_pass.strip()
+        with st.form("quick_login_form"):
+            input_pass = st.text_input("Enter Site Access Password", type="password")
+            submit_quick = st.form_submit_button("Log In")
 
-            if not clean_name:
-                st.error("Please enter a valid Engineer Name or ID.")
-            elif clean_pass != SITE_USER_PASSWORD.strip():
-                st.error("Incorrect Site Access Password.")
-            else:
-                if authorized_list:
-                    auth_lower_map = {name.lower(): name for name in authorized_list}
-                    if clean_name.lower() in auth_lower_map:
-                        st.session_state["engineer_name"] = auth_lower_map[clean_name.lower()]
-                        st.session_state["user_authenticated"] = True
-                        st.rerun()
-                    else:
-                        st.error("Access Denied: Your name is not on the authorized engineers list.")
+            if submit_quick:
+                if input_pass.strip() != SITE_USER_PASSWORD.strip():
+                    st.error("Incorrect Password.")
                 else:
-                    st.session_state["engineer_name"] = clean_name.title()
+                    st.session_state["engineer_name"] = saved_user
                     st.session_state["user_authenticated"] = True
                     st.rerun()
+
+        if st.button("Not you? Switch Engineer Profile"):
+            st.session_state["switch_user_mode"] = True
+            st.rerun()
+
+    # SCENARIO B: First-time login OR "Switch Engineer" clicked
+    else:
+        st.info("👋 Welcome! Select your authorized engineer name/ID and site password.")
+
+        with st.form("user_login_form"):
+            input_name = st.text_input("Engineer Name / ID", placeholder="e.g. John Doe / ENG-102")
+            input_pass = st.text_input("Site Access Password", type="password")
+            remember_me = st.checkbox("Remember my name on this device", value=True)
+            submit_login = st.form_submit_button("Log In")
+
+            if submit_login:
+                clean_name = input_name.strip() if input_name else ""
+                clean_pass = input_pass.strip()
+
+                if not clean_name:
+                    st.error("Please enter a valid Engineer Name or ID.")
+                elif clean_pass != SITE_USER_PASSWORD.strip():
+                    st.error("Incorrect Site Access Password.")
+                else:
+                    target_name = clean_name.title()
+                    if authorized_list:
+                        auth_lower_map = {name.lower(): name for name in authorized_list}
+                        if clean_name.lower() in auth_lower_map:
+                            target_name = auth_lower_map[clean_name.lower()]
+                        else:
+                            st.error("Access Denied: Your name is not on the authorized engineers list.")
+                            st.stop()
+
+                    st.session_state["engineer_name"] = target_name
+                    st.session_state["user_authenticated"] = True
+                    st.session_state["switch_user_mode"] = False
+
+                    # Save remembered engineer name to cookie
+                    if remember_me:
+                        cookie_manager.set(
+                            cookie="heli_snag_remembered_user",
+                            val=target_name,
+                            key="set_remembered_user",
+                            expires_at=pd.Timestamp.now() + pd.Timedelta(days=60)
+                        )
+                    st.rerun()
+
+        if saved_user and st.session_state["switch_user_mode"]:
+            if st.button("Back to Quick Login"):
+                st.session_state["switch_user_mode"] = False
+                st.rerun()
 
     st.stop()  # Halts further rendering until authenticated
 
@@ -124,13 +177,14 @@ st.sidebar.write(f"Logged in as: **{st.session_state['engineer_name']}**")
 if st.sidebar.button("Log Out / Switch Engineer"):
     st.session_state["engineer_name"] = ""
     st.session_state["user_authenticated"] = False
+    st.session_state["switch_user_mode"] = True
     st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.header("Filter Snags")
 status_filter = st.sidebar.multiselect("Status", ["Open", "In Progress", "Deferred", "Closed"], default=["Open", "In Progress", "Deferred"])
 
-# Navigation Tabs (Analytics positioned right before Admin Controls)
+# Navigation Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Dashboard", "➕ Log New Snag", "✏️ Update Snag", "📊 Analytics", "🔒 Admin Controls"])
 
 # ---------------------------------------------------------
