@@ -18,6 +18,18 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
+# Helper function to delete image from Supabase Storage bucket
+def delete_snag_photo_from_storage(image_url):
+    if not image_url or not isinstance(image_url, str) or not image_url.strip():
+        return
+    try:
+        # Extract filename from public URL (e.g. ".../snag-photos/snag_1690000.jpg" -> "snag_1690000.jpg")
+        file_path = image_url.split('/')[-1]
+        if file_path:
+            supabase.storage.from_("snag-photos").remove([file_path])
+    except Exception as e:
+        st.warning(f"Could not remove image from storage: {e}")
+
 # Helper function to fetch authorized engineers list
 def get_authorized_engineers():
     try:
@@ -383,10 +395,19 @@ with tab3:
                 update_btn = st.form_submit_button("Save Update")
 
                 if update_btn:
+                    # DELETE PHOTO FROM STORAGE IF STATUS WAS CHANGED TO CLOSED
+                    if new_status == "Closed" and selected_snag.get("image_url"):
+                        delete_snag_photo_from_storage(selected_snag["image_url"])
+                        updated_image_url = None
+                    else:
+                        updated_image_url = selected_snag.get("image_url")
+
                     supabase.table("snags").update({
                         "status": new_status,
-                        "resolution": resolution
+                        "resolution": resolution,
+                        "image_url": updated_image_url
                     }).eq("id", selected_snag['id']).execute()
+
                     st.success(f"Snag ID #{selected_snag['id']} updated successfully!")
                     st.rerun()
         else:
@@ -553,7 +574,7 @@ with tab5:
             if all_snags:
                 st.info("Select one or multiple snag records below to perform bulk actions.")
                 admin_snag_map = {
-                    f"ID #{s['id']} [{s['status']}] - {s['aircraft']}: {s['description'][:35]}...": s['id']
+                    f"ID #{s['id']} [{s['status']}] - {s['aircraft']}: {s['description'][:35]}...": s
                     for s in all_snags
                 }
 
@@ -564,19 +585,31 @@ with tab5:
                 )
 
                 if selected_labels:
-                    selected_ids = [admin_snag_map[lbl] for lbl in selected_labels]
+                    selected_records = [admin_snag_map[lbl] for lbl in selected_labels]
+                    selected_ids = [rec['id'] for rec in selected_records]
                     st.write(f"**Selected {len(selected_ids)} snag(s)** (IDs: {', '.join(map(str, selected_ids))})")
 
                     del_col1, del_col2 = st.columns(2)
                     with del_col1:
                         if st.button(f"❌ Delete {len(selected_ids)} Selected Record(s)", use_container_width=True):
+                            # Remove all attached photos from storage first
+                            for rec in selected_records:
+                                if rec.get("image_url"):
+                                    delete_snag_photo_from_storage(rec["image_url"])
+
                             supabase.table("snags").delete().in_("id", selected_ids).execute()
-                            st.warning(f"Deleted {len(selected_ids)} snag record(s) from database.")
+                            st.warning(f"Deleted {len(selected_ids)} snag record(s) and associated photo(s) from database.")
                             st.rerun()
+
                     with del_col2:
                         if st.button(f"✅ Force Close {len(selected_ids)} Selected Record(s)", use_container_width=True):
-                            supabase.table("snags").update({"status": "Closed"}).in_("id", selected_ids).execute()
-                            st.success(f"Force-closed {len(selected_ids)} snag record(s).")
+                            # Remove all attached photos from storage first
+                            for rec in selected_records:
+                                if rec.get("image_url"):
+                                    delete_snag_photo_from_storage(rec["image_url"])
+
+                            supabase.table("snags").update({"status": "Closed", "image_url": None}).in_("id", selected_ids).execute()
+                            st.success(f"Force-closed {len(selected_ids)} snag record(s) and cleared photo storage.")
                             st.rerun()
                 else:
                     st.caption("No snags selected yet. Click the box above to choose records.")
