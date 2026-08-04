@@ -17,6 +17,32 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
+# ---------------------------------------------------------
+# INITIAL SESSION STATE: REQUIRE ENGINEER NAME ON STARTUP
+# ---------------------------------------------------------
+if "engineer_name" not in st.session_state:
+    st.session_state["engineer_name"] = ""
+
+if not st.session_state["engineer_name"]:
+    st.title("🚁 Helicopter Live Snag Log")
+    st.info("👋 Welcome! Please enter your name to access the Snag Tracker.")
+
+    with st.form("engineer_name_form"):
+        input_name = st.text_input("Engineer Name / ID", placeholder="e.g., John Doe / ENG-102")
+        submit_name = st.form_submit_button("Start Session")
+
+        if submit_name:
+            if input_name.strip():
+                st.session_state["engineer_name"] = input_name.strip()
+                st.rerun()
+            else:
+                st.error("Please enter a valid name or ID to continue.")
+
+    st.stop()  # Halts further rendering until name is provided
+
+# ---------------------------------------------------------
+# MAIN APP (Renders once engineer name is provided)
+# ---------------------------------------------------------
 st.title("🚁 Helicopter Live Snag Log")
 
 # Helper function to compress and resize uploaded photos
@@ -59,7 +85,10 @@ ATA_CHAPTERS = [
 
 # Sidebar - User Info & Quick Filters
 st.sidebar.header("Engineer Details")
-current_engineer = st.sidebar.text_input("Your Name / ID", value="Engineer")
+st.sidebar.write(f"Logged in as: **{st.session_state['engineer_name']}**")
+if st.sidebar.button("Switch Engineer"):
+    st.session_state["engineer_name"] = ""
+    st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.header("Filter Snags")
@@ -150,7 +179,7 @@ with tab1:
         st.info("No snags recorded yet.")
 
 # ---------------------------------------------------------
-# TAB 2: LOG NEW SNAG (AUTO-COMPRESSING PHOTO UPLOAD)
+# TAB 2: LOG NEW SNAG
 # ---------------------------------------------------------
 with tab2:
     st.subheader("Report a Defect")
@@ -161,7 +190,7 @@ with tab2:
             aircraft = st.selectbox("Helicopter Tail Number", FLEET_TAIL_NUMBERS)
             system = st.selectbox("System / ATA Chapter", ATA_CHAPTERS)
         with col2:
-            engineer = st.text_input("Logged By", value=current_engineer)
+            engineer = st.text_input("Logged By", value=st.session_state["engineer_name"], disabled=True)
             status = st.selectbox("Initial Status", ["Open", "Deferred"])
 
         description = st.text_area("Detailed Snag Description")
@@ -174,21 +203,20 @@ with tab2:
             else:
                 image_url = None
                 if uploaded_file is not None:
-                    # Compress and resize photo automatically
                     compressed_bytes = compress_image(uploaded_file, max_size=(1024, 1024), quality=75)
                     file_path = f"snag_{int(time.time())}.jpg"
 
                     supabase.storage.from_("snag-photos").upload(
                         path=file_path,
                         file=compressed_bytes,
-                        file_options={"content-type": "image/jpeg"}
+                        file_options={"content-type": "image/jpeg", "upsert": "true"}
                     )
                     image_url = supabase.storage.from_("snag-photos").get_public_url(file_path)
 
                 new_entry = {
                     "aircraft": aircraft,
                     "system": system,
-                    "engineer": engineer,
+                    "engineer": st.session_state["engineer_name"],
                     "status": status,
                     "description": description,
                     "image_url": image_url
@@ -231,7 +259,7 @@ with tab3:
         st.info("No active open snags available to update.")
 
 # ---------------------------------------------------------
-# TAB 4: ADMIN CONTROLS (FLEET MANAGEMENT & PURGING)
+# TAB 4: ADMIN CONTROLS
 # ---------------------------------------------------------
 with tab4:
     st.subheader("Admin Access Required")
@@ -250,10 +278,8 @@ with tab4:
 
         admin_sub1, admin_sub2 = st.tabs(["🚁 Fleet Management", "🗑️ Delete / Force Close Snags"])
 
-        # --- SUBTAB 1: FLEET MANAGEMENT ---
         with admin_sub1:
             st.write("### Manage Fleet Registrations / Tail Numbers")
-
             col_add, col_rem = st.columns(2)
 
             with col_add:
@@ -281,10 +307,8 @@ with tab4:
                     except Exception as e:
                         st.error(f"Error removing tail number: {e}")
 
-        # --- SUBTAB 2: DELETE / FORCE CLOSE SNAGS ---
         with admin_sub2:
             st.write("### Manage Database Records")
-
             response = supabase.table("snags").select("*").execute()
             all_snags = response.data
 
@@ -294,13 +318,11 @@ with tab4:
                 admin_selected_snag = admin_snag_options[del_selected_label]
 
                 del_col1, del_col2 = st.columns(2)
-
                 with del_col1:
                     if st.button("❌ Permanently Delete Record"):
                         supabase.table("snags").delete().eq("id", admin_selected_snag['id']).execute()
                         st.warning(f"Snag ID #{admin_selected_snag['id']} deleted from database.")
                         st.rerun()
-
                 with del_col2:
                     if st.button("✅ Force Close Snag"):
                         supabase.table("snags").update({"status": "Closed"}).eq("id", admin_selected_snag['id']).execute()
