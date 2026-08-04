@@ -18,30 +18,44 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ---------------------------------------------------------
-# INITIAL SESSION STATE: REQUIRE ENGINEER NAME ON STARTUP
+# INITIAL SESSION STATE: REQUIRE NAME & PASSWORD ON STARTUP
 # ---------------------------------------------------------
 if "engineer_name" not in st.session_state:
     st.session_state["engineer_name"] = ""
+if "user_authenticated" not in st.session_state:
+    st.session_state["user_authenticated"] = False
 
-if not st.session_state["engineer_name"]:
+# Fetch the predefined site password from secrets
+try:
+    SITE_USER_PASSWORD = st.secrets["USER_PASSWORD"]
+except KeyError:
+    st.error("Site User Password not configured. Please add 'USER_PASSWORD' to your Streamlit Secrets.")
+    st.stop()
+
+# Prompt for Login Details if not authenticated
+if not st.session_state["user_authenticated"]:
     st.title("🚁 Helicopter Live Snag Log")
-    st.info("👋 Welcome! Please enter your name to access the Snag Tracker.")
+    st.info("👋 Welcome! Please enter your details and site password to log in.")
 
-    with st.form("engineer_name_form"):
+    with st.form("user_login_form"):
         input_name = st.text_input("Engineer Name / ID", placeholder="e.g., John Doe / ENG-102")
-        submit_name = st.form_submit_button("Start Session")
+        input_pass = st.text_input("Site Access Password", type="password")
+        submit_login = st.form_submit_button("Log In")
 
-        if submit_name:
-            if input_name.strip():
-                st.session_state["engineer_name"] = input_name.strip()
-                st.rerun()
+        if submit_login:
+            if not input_name.strip():
+                st.error("Please enter a valid name or ID.")
+            elif input_pass != SITE_USER_PASSWORD:
+                st.error("Incorrect Site Access Password.")
             else:
-                st.error("Please enter a valid name or ID to continue.")
+                st.session_state["engineer_name"] = input_name.strip()
+                st.session_state["user_authenticated"] = True
+                st.rerun()
 
-    st.stop()  # Halts further rendering until name is provided
+    st.stop()  # Halts further rendering until authenticated
 
 # ---------------------------------------------------------
-# MAIN APP (Renders once engineer name is provided)
+# MAIN APP (Renders once user is authenticated)
 # ---------------------------------------------------------
 st.title("🚁 Helicopter Live Snag Log")
 
@@ -86,8 +100,9 @@ ATA_CHAPTERS = [
 # Sidebar - User Info & Quick Filters
 st.sidebar.header("Engineer Details")
 st.sidebar.write(f"Logged in as: **{st.session_state['engineer_name']}**")
-if st.sidebar.button("Switch Engineer"):
+if st.sidebar.button("Log Out / Switch Engineer"):
     st.session_state["engineer_name"] = ""
+    st.session_state["user_authenticated"] = False
     st.rerun()
 
 st.sidebar.markdown("---")
