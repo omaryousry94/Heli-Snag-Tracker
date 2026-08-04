@@ -244,35 +244,69 @@ with tab2:
                 st.rerun()
 
 # ---------------------------------------------------------
-# TAB 3: UPDATE SNAG
+# TAB 3: UPDATE SNAG (ORGANIZED BY A/C & ATA CHAPTER)
 # ---------------------------------------------------------
 with tab3:
     st.subheader("Update Existing Snag Status")
 
-    response = supabase.table("snags").select("*").neq("status", "Closed").execute()
+    # Fetch all non-closed active snags
+    response = supabase.table("snags").select("*").neq("status", "Closed").order("id", desc=True).execute()
     active_snags = response.data
 
     if active_snags:
-        snag_options = {f"ID #{s['id']} - {s['aircraft']} ({s['system']}): {s['description'][:30]}...": s for s in active_snags}
-        selected_label = st.selectbox("Select Snag to Update", list(snag_options.keys()))
-        selected_snag = snag_options[selected_label]
+        st.markdown("#### 1. Filter Snag Location")
+        filter_col1, filter_col2 = st.columns(2)
 
-        with st.form("update_snag_form"):
-            st.write(f"**Current Details:** {selected_snag['description']}")
-            if selected_snag.get('image_url') and pd.notna(selected_snag.get('image_url')) and str(selected_snag.get('image_url')).strip() != "":
-                st.image(selected_snag['image_url'], width=250)
+        with filter_col1:
+            selected_ac_filter = st.selectbox("Filter by Aircraft (A/C)", ["All Aircraft"] + FLEET_TAIL_NUMBERS)
 
-            new_status = st.selectbox("New Status", ["Open", "In Progress", "Deferred", "Closed"], index=["Open", "In Progress", "Deferred", "Closed"].index(selected_snag['status']))
-            resolution = st.text_area("Corrective Action / Resolution Notes", value=selected_snag.get('resolution', ''))
-            update_btn = st.form_submit_button("Save Update")
+        with filter_col2:
+            selected_ata_filter = st.selectbox("Filter by ATA Chapter", ["All ATA Chapters"] + ATA_CHAPTERS)
 
-            if update_btn:
-                supabase.table("snags").update({
-                    "status": new_status,
-                    "resolution": resolution
-                }).eq("id", selected_snag['id']).execute()
-                st.success(f"Snag ID #{selected_snag['id']} updated successfully!")
-                st.rerun()
+        # Apply filters
+        filtered_active = active_snags
+        if selected_ac_filter != "All Aircraft":
+            filtered_active = [s for s in filtered_active if s.get("aircraft") == selected_ac_filter]
+        if selected_ata_filter != "All ATA Chapters":
+            filtered_active = [s for s in filtered_active if s.get("system") == selected_ata_filter]
+
+        st.markdown("---")
+        st.markdown("#### 2. Select & Update Defect")
+
+        if filtered_active:
+            snag_options = {
+                f"ID #{s['id']} | [{s['aircraft']}] [{s['system']}] - {s['description'][:35]}...": s
+                for s in filtered_active
+            }
+            selected_label = st.selectbox("Select Snag to Update", list(snag_options.keys()))
+            selected_snag = snag_options[selected_label]
+
+            with st.form("update_snag_form"):
+                col_info1, col_info2 = st.columns(2)
+                col_info1.write(f"**Aircraft:** {selected_snag['aircraft']}")
+                col_info1.write(f"**ATA Chapter:** {selected_snag['system']}")
+                col_info2.write(f"**Logged By:** {selected_snag['engineer']}")
+                col_info2.write(f"**Current Status:** `{selected_snag['status']}`")
+
+                st.write(f"**Description:** {selected_snag['description']}")
+
+                if selected_snag.get('image_url') and pd.notna(selected_snag.get('image_url')) and str(selected_snag.get('image_url')).strip() != "":
+                    st.image(selected_snag['image_url'], width=300, caption="Attached Defect Photo")
+
+                st.markdown("---")
+                new_status = st.selectbox("New Status", ["Open", "In Progress", "Deferred", "Closed"], index=["Open", "In Progress", "Deferred", "Closed"].index(selected_snag['status']))
+                resolution = st.text_area("Corrective Action / Maintenance Notes", value=selected_snag.get('resolution', ''))
+                update_btn = st.form_submit_button("Save Update")
+
+                if update_btn:
+                    supabase.table("snags").update({
+                        "status": new_status,
+                        "resolution": resolution
+                    }).eq("id", selected_snag['id']).execute()
+                    st.success(f"Snag ID #{selected_snag['id']} updated successfully!")
+                    st.rerun()
+        else:
+            st.info("No active open snags match the selected A/C and ATA Chapter filters.")
     else:
         st.info("No active open snags available to update.")
 
