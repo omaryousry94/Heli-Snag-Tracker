@@ -37,6 +37,8 @@ if "user_authenticated" not in st.session_state:
     st.session_state["user_authenticated"] = False
 if "switch_user_mode" not in st.session_state:
     st.session_state["switch_user_mode"] = False
+if "snag_added_success_msg" not in st.session_state:
+    st.session_state["snag_added_success_msg"] = None
 
 # Fetch remembered user directly from Streamlit URL Query Params
 saved_user = st.query_params.get("remembered_user", None)
@@ -180,7 +182,13 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Dashboard", "➕ Log New Snag", "�
 # TAB 1: LIVE DASHBOARD & EXPORT
 # ---------------------------------------------------------
 with tab1:
-    st.subheader("Current Fleet Status")
+    header_col1, header_col2 = st.columns([3, 1])
+    with header_col1:
+        st.subheader("Current Fleet Status")
+    with header_col2:
+        # FEATURE 1: DASHBOARD REFRESH BUTTON
+        if st.button("🔄 Refresh Live Data", use_container_width=True):
+            st.rerun()
 
     search_col1, search_col2 = st.columns(2)
     with search_col1:
@@ -211,7 +219,7 @@ with tab1:
             open_count = len(df[df['status'] == 'Open'])
             st.metric(label="Open / Active Snags (Filtered)", value=open_count)
 
-            # REORDER COLUMNS: created_at kept at the end
+            # Reordered table view with created_at at the end
             display_df = df[['id', 'aircraft', 'system', 'status', 'engineer', 'description', 'image_url', 'resolution', 'created_at']]
             st.dataframe(
                 display_df,
@@ -220,17 +228,28 @@ with tab1:
                 hide_index=True
             )
 
-            with st.expander("🖼️ View Photos of Selected Snags"):
+            # FEATURE 3: SELECT ONLY ONE SPECIFIC SNAG TO VIEW ITS PHOTO
+            st.markdown("---")
+            with st.expander("🖼️ Inspect Photo Attachment"):
                 snags_with_photos = [
                     s for s in df.to_dict('records')
                     if s.get('image_url') and pd.notna(s.get('image_url')) and str(s.get('image_url')).strip() != ""
                 ]
                 if snags_with_photos:
-                    for s in snags_with_photos:
-                        st.caption(f"**ID #{s['id']} - {s['aircraft']}** logged by {s['engineer']}")
-                        st.image(s['image_url'], width=300)
+                    photo_options = {
+                        f"ID #{s['id']} - [{s['aircraft']}] {s['description'][:40]}...": s
+                        for s in snags_with_photos
+                    }
+                    selected_photo_label = st.selectbox(
+                        "Select a snag record to display its photo:",
+                        list(photo_options.keys())
+                    )
+                    chosen_snag = photo_options[selected_photo_label]
+
+                    st.caption(f"**Photo for Snag ID #{chosen_snag['id']}** | {chosen_snag['aircraft']} ({chosen_snag['system']}) logged by {chosen_snag['engineer']}")
+                    st.image(chosen_snag['image_url'], width=450)
                 else:
-                    st.write("No photo attachments in the current filter selection.")
+                    st.info("No photo attachments in the current filter selection.")
 
             # EXPORT SECTION
             st.markdown("---")
@@ -266,6 +285,11 @@ with tab1:
 # ---------------------------------------------------------
 with tab2:
     st.subheader("Report a Defect")
+
+    # FEATURE 2: DISPLAY SUCCESS CONFIRMATION MSG AFTER ADDING A SNAG
+    if st.session_state["snag_added_success_msg"]:
+        st.success(st.session_state["snag_added_success_msg"])
+        st.session_state["snag_added_success_msg"] = None  # Clear after display
 
     with st.form("new_snag_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -305,7 +329,9 @@ with tab2:
                     "image_url": image_url
                 }
                 supabase.table("snags").insert(new_entry).execute()
-                st.success(f"Snag logged successfully for {aircraft}!")
+
+                # Set persistent success message for rerender
+                st.session_state["snag_added_success_msg"] = f"✅ Snag successfully recorded and saved for {aircraft}!"
                 st.rerun()
 
 # ---------------------------------------------------------
