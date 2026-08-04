@@ -10,12 +10,8 @@ import extra_streamlit_components as stx
 # Page Configuration for Mobile
 st.set_page_config(page_title="Heli Snag Tracker", page_icon="🚁", layout="wide")
 
-# Initialize Cookie Manager
-@st.cache_resource
-def get_cookie_manager():
-    return stx.CookieManager()
-
-cookie_manager = get_cookie_manager()
+# Initialize Cookie Manager directly (No @st.cache_resource decorator to avoid CachedWidgetWarning)
+cookie_manager = stx.CookieManager()
 
 # Initialize Supabase Connection
 @st.cache_resource
