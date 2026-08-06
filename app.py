@@ -3,6 +3,9 @@ from supabase import create_client, Client
 import pandas as pd
 import time
 import io
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from PIL import Image
 import plotly.express as px
 
@@ -18,6 +21,45 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
+# Helper function to send instant email notifications
+def send_snag_email_notification(aircraft, system, engineer, status, description):
+    try:
+        sender_email = st.secrets["email"]["SENDER_EMAIL"]
+        sender_password = st.secrets["email"]["SENDER_PASSWORD"]
+        recipient_email = st.secrets["email"]["NOTIFICATION_RECIPIENT"]
+
+        subject = f"🚁 NEW SNAG LOGGED: {aircraft} [{status}]"
+
+        body = f"""
+        A new defect report has been submitted to the Helicopter Snag Tracker:
+
+        • Aircraft: {aircraft}
+        • ATA System / Chapter: {system}
+        • Logged By: {engineer}
+        • Initial Status: {status}
+
+        --------------------------------------------------
+        DESCRIPTION:
+        {description}
+        --------------------------------------------------
+
+        Log into the dashboard to view full details or attached photos.
+        """
+
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        # Connect to Gmail SMTP Server over SSL
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, recipient_email, msg.as_string())
+    except Exception as e:
+        # Fail gracefully so email errors never block snag database entry
+        pass
+
 # Helper function to fetch authorized engineers list
 def get_authorized_engineers():
     try:
@@ -32,11 +74,10 @@ def get_authorized_engineers():
 def delete_snag_photo(image_url):
     if image_url and pd.notna(image_url) and str(image_url).strip() != "":
         try:
-            # Extract image filename from URL (e.g., snag_1712345678.jpg)
             file_name = str(image_url).split("/")[-1]
             supabase.storage.from_("snag-photos").remove([file_name])
         except Exception:
-            pass  # Fail gracefully if file is already missing or invalid URL
+            pass  # Fail gracefully if missing
 
 # ---------------------------------------------------------
 # INITIAL SESSION STATE & AUTO-LOGIN QUERY PARAM RETRIEVAL
@@ -201,7 +242,6 @@ with tab1:
     with header_col1:
         st.subheader("Current Fleet Status")
     with header_col2:
-        # DASHBOARD REFRESH BUTTON
         if st.button("🔄 Refresh Live Data", use_container_width=True):
             st.rerun()
 
@@ -340,7 +380,18 @@ with tab2:
                     "description": description,
                     "image_url": image_url
                 }
+
+                # 1. Insert into Supabase
                 supabase.table("snags").insert(new_entry).execute()
+
+                # 2. Trigger Instant Email Notification
+                send_snag_email_notification(
+                    aircraft=aircraft,
+                    system=system,
+                    engineer=st.session_state["engineer_name"],
+                    status=status,
+                    description=description
+                )
 
                 st.session_state["snag_added_success_msg"] = f"✅ Snag successfully recorded and saved for {aircraft}!"
                 st.rerun()
@@ -399,7 +450,6 @@ with tab3:
                 update_btn = st.form_submit_button("Save Update")
 
                 if update_btn:
-                    # IF STATUS UPDATED TO CLOSED: Delete attached photo from storage & clear image_url
                     final_image_url = selected_snag.get('image_url')
                     if new_status == "Closed":
                         delete_snag_photo(selected_snag.get('image_url'))
