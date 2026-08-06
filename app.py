@@ -3,8 +3,16 @@ from supabase import create_client, Client
 import pandas as pd
 import time
 import io
+import re
 from PIL import Image
 import plotly.express as px
+
+# Safe import for Speech-to-Text component
+try:
+    from streamlit_mic_recorder import speech_to_text
+    HAS_MIC_RECORDER = True
+except ImportError:
+    HAS_MIC_RECORDER = False
 
 # Page Configuration for Mobile
 st.set_page_config(page_title="Heli Snag Tracker", page_icon="🚁", layout="wide")
@@ -32,11 +40,10 @@ def get_authorized_engineers():
 def delete_snag_photo(image_url):
     if image_url and pd.notna(image_url) and str(image_url).strip() != "":
         try:
-            # Extract image filename from URL (e.g., snag_1712345678.jpg)
             file_name = str(image_url).split("/")[-1]
             supabase.storage.from_("snag-photos").remove([file_name])
         except Exception:
-            pass  # Fail gracefully if file is already missing or invalid URL
+            pass  # Fail gracefully if missing
 
 # ---------------------------------------------------------
 # INITIAL SESSION STATE & AUTO-LOGIN QUERY PARAM RETRIEVAL
@@ -49,6 +56,14 @@ if "switch_user_mode" not in st.session_state:
     st.session_state["switch_user_mode"] = False
 if "snag_added_success_msg" not in st.session_state:
     st.session_state["snag_added_success_msg"] = None
+
+# Pre-fill states for Quick Entry / Voice Parsing
+if "prefill_aircraft" not in st.session_state:
+    st.session_state["prefill_aircraft"] = None
+if "prefill_system" not in st.session_state:
+    st.session_state["prefill_system"] = None
+if "prefill_desc" not in st.session_state:
+    st.session_state["prefill_desc"] = ""
 
 # Fetch remembered user directly from Streamlit URL Query Params
 saved_user = st.query_params.get("remembered_user", None)
@@ -175,6 +190,41 @@ ATA_CHAPTERS = [
     "Flight Controls"
 ]
 
+COMMON_FAULT_TEMPLATES = [
+    ("⚡ Nav / Position Light Out", "Electrical System", "Navigation / position light standard bulb unserviceable."),
+    ("💧 Hydraulic Fluid Seep", "Hydraulic System", "Minor hydraulic fluid seepage noted near ground connection valve."),
+    ("🔋 Low Battery Volts Warning", "Electrical System", "Battery low voltage indication on pre-flight test."),
+    ("🛞 Landing Gear Pressure Low", "Airframe / Structure", "Main landing gear tire pressure found below flight manual limit."),
+    ("🛢️ Oil Chip Warning Annunciator", "Engine / Powerplant", "Engine magnetic chip detector annunciator light flickering during run-up."),
+    ("📻 Comm 1 Static / Noise", "Avionics / Instruments", "Excessive static noise on VHF Comm 1 radio channel during check.")
+]
+
+# Helper function to parse voice text into aircraft, ATA, and description
+def parse_voice_to_snag(speech_text, fleet_list, ata_list):
+    text_lower = speech_text.lower()
+
+    # Match Aircraft
+    matched_ac = None
+    for ac in fleet_list:
+        clean_ac = re.sub(r'[^a-z0-9]', '', ac.lower())
+        spoken_clean = re.sub(r'[^a-z0-9]', '', text_lower)
+        if clean_ac in spoken_clean or ac.lower() in text_lower:
+            matched_ac = ac
+            break
+
+    # Match ATA System
+    matched_sys = None
+    for sys in ata_list:
+        keywords = sys.lower().split('/')
+        for kw in keywords:
+            if kw.strip() in text_lower:
+                matched_sys = sys
+                break
+        if matched_sys:
+            break
+
+    return matched_ac, matched_sys, speech_text.strip().capitalize()
+
 # Sidebar - User Info & Quick Filters
 st.sidebar.header("Engineer Details")
 st.sidebar.write(f"Logged in as: **{st.session_state['engineer_name']}**")
@@ -201,7 +251,6 @@ with tab1:
     with header_col1:
         st.subheader("Current Fleet Status")
     with header_col2:
-        # DASHBOARD REFRESH BUTTON
         if st.button("🔄 Refresh Live Data", use_container_width=True):
             st.rerun()
 
@@ -294,27 +343,74 @@ with tab1:
         st.info("No snags recorded yet.")
 
 # ---------------------------------------------------------
-# TAB 2: LOG NEW SNAG
+# TAB 2: LOG NEW SNAG (WITH VOICE & QUICK TEMPLATES)
 # ---------------------------------------------------------
 with tab2:
     st.subheader("Report a Defect")
 
     if st.session_state["snag_added_success_msg"]:
         st.success(st.session_state["snag_added_success_msg"])
-        st.session_state["snag_added_success_msg"] = None  # Clear after display
+        st.session_state["snag_added_success_msg"] = None
+
+    # LINE MAINTENANCE ACCELERATORS EXPANDER
+    with st.expander("⚡ Line Maintenance Quick Tools (Voice & Fault Templates)", expanded=True):
+        st.write("##### 🎤 Dictate Voice Snag")
+        st.caption("Press record and speak naturally (e.g., *'AW139 Reg 01 hydraulic seepage near ground connection'*).")
+
+        if HAS_MIC_RECORDER:
+            spoken_text = speech_to_text(
+                language='en',
+                start_prompt="🎤 Start Dictating",
+                stop_prompt="⏹️ Stop & Parse",
+                just_once=True,
+                key='STT_VOICE'
+            )
+            if spoken_text:
+                v_ac, v_sys, v_desc = parse_voice_to_snag(spoken_text, FLEET_TAIL_NUMBERS, ATA_CHAPTERS)
+                st.session_state["prefill_desc"] = v_desc
+                if v_ac:
+                    st.session_state["prefill_aircraft"] = v_ac
+                if v_sys:
+                    st.session_state["prefill_system"] = v_sys
+                st.success(f"Parsed Voice Input: '{spoken_text}'")
+                st.rerun()
+        else:
+            st.info("💡 To enable 1-tap voice dictation, install `streamlit-mic-recorder` in your `requirements.txt` file on GitHub.")
+
+        st.markdown("---")
+        st.write("##### ⚡ Common Fault Templates")
+        tmpl_cols = st.columns(3)
+        for idx, (tmpl_title, tmpl_sys, tmpl_text) in enumerate(COMMON_FAULT_TEMPLATES):
+            col_target = tmpl_cols[idx % 3]
+            if col_target.button(tmpl_title, key=f"tmpl_btn_{idx}", use_container_width=True):
+                st.session_state["prefill_system"] = tmpl_sys
+                st.session_state["prefill_desc"] = tmpl_text
+                st.rerun()
+
+    st.markdown("---")
+    st.write("#### 📝 Snag Entry Form")
+
+    # Set default index values based on pre-fills
+    default_ac_idx = 0
+    if st.session_state["prefill_aircraft"] and st.session_state["prefill_aircraft"] in FLEET_TAIL_NUMBERS:
+        default_ac_idx = FLEET_TAIL_NUMBERS.index(st.session_state["prefill_aircraft"])
+
+    default_sys_idx = 0
+    if st.session_state["prefill_system"] and st.session_state["prefill_system"] in ATA_CHAPTERS:
+        default_sys_idx = ATA_CHAPTERS.index(st.session_state["prefill_system"])
 
     with st.form("new_snag_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
-            aircraft = st.selectbox("Helicopter Tail Number", FLEET_TAIL_NUMBERS)
-            system = st.selectbox("System / ATA Chapter", ATA_CHAPTERS)
+            aircraft = st.selectbox("Helicopter Tail Number", FLEET_TAIL_NUMBERS, index=default_ac_idx)
+            system = st.selectbox("System / ATA Chapter", ATA_CHAPTERS, index=default_sys_idx)
         with col2:
             engineer = st.text_input("Logged By", value=st.session_state["engineer_name"], disabled=True)
             status = st.selectbox("Initial Status", ["Open", "Deferred"])
 
-        description = st.text_area("Detailed Snag Description")
+        description = st.text_area("Detailed Snag Description", value=st.session_state["prefill_desc"])
         uploaded_file = st.file_uploader("Take Photo or Attach Image", type=["jpg", "jpeg", "png"])
-        submitted = st.form_submit_button("Submit Snag Entry")
+        submitted = st.form_submit_button("Submit Snag Entry", use_container_width=True)
 
         if submitted:
             if not description.strip():
@@ -341,6 +437,11 @@ with tab2:
                     "image_url": image_url
                 }
                 supabase.table("snags").insert(new_entry).execute()
+
+                # Clear pre-fills
+                st.session_state["prefill_aircraft"] = None
+                st.session_state["prefill_system"] = None
+                st.session_state["prefill_desc"] = ""
 
                 st.session_state["snag_added_success_msg"] = f"✅ Snag successfully recorded and saved for {aircraft}!"
                 st.rerun()
@@ -399,7 +500,6 @@ with tab3:
                 update_btn = st.form_submit_button("Save Update")
 
                 if update_btn:
-                    # IF STATUS UPDATED TO CLOSED: Delete attached photo from storage & clear image_url
                     final_image_url = selected_snag.get('image_url')
                     if new_status == "Closed":
                         delete_snag_photo(selected_snag.get('image_url'))
@@ -595,7 +695,6 @@ with tab5:
                     del_col1, del_col2 = st.columns(2)
                     with del_col1:
                         if st.button(f"❌ Delete {len(selected_ids)} Selected Record(s)", use_container_width=True):
-                            # Delete images from storage first
                             for s_obj in selected_snag_objs:
                                 delete_snag_photo(s_obj.get('image_url'))
 
@@ -604,7 +703,6 @@ with tab5:
                             st.rerun()
                     with del_col2:
                         if st.button(f"✅ Force Close {len(selected_ids)} Selected Record(s)", use_container_width=True):
-                            # Delete images from storage first and set image_url to None
                             for s_obj in selected_snag_objs:
                                 delete_snag_photo(s_obj.get('image_url'))
 
