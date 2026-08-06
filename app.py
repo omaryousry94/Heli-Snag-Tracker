@@ -18,18 +18,6 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# Helper function to delete image from Supabase Storage bucket
-def delete_snag_photo_from_storage(image_url):
-    if not image_url or not isinstance(image_url, str) or not image_url.strip():
-        return
-    try:
-        # Extract filename from public URL (e.g. ".../snag-photos/snag_1690000.jpg" -> "snag_1690000.jpg")
-        file_path = image_url.split('/')[-1]
-        if file_path:
-            supabase.storage.from_("snag-photos").remove([file_path])
-    except Exception as e:
-        st.warning(f"Could not remove image from storage: {e}")
-
 # Helper function to fetch authorized engineers list
 def get_authorized_engineers():
     try:
@@ -41,7 +29,7 @@ def get_authorized_engineers():
     return []
 
 # ---------------------------------------------------------
-# INITIAL SESSION STATE & QUERY PARAMETER LOGIN RETRIEVAL
+# INITIAL SESSION STATE & AUTO-LOGIN QUERY PARAM RETRIEVAL
 # ---------------------------------------------------------
 if "engineer_name" not in st.session_state:
     st.session_state["engineer_name"] = ""
@@ -49,11 +37,15 @@ if "user_authenticated" not in st.session_state:
     st.session_state["user_authenticated"] = False
 if "switch_user_mode" not in st.session_state:
     st.session_state["switch_user_mode"] = False
-if "snag_added_success_msg" not in st.session_state:
-    st.session_state["snag_added_success_msg"] = None
 
 # Fetch remembered user directly from Streamlit URL Query Params
 saved_user = st.query_params.get("remembered_user", None)
+
+# AUTO-LOGIN FIX:
+# If session state resets (e.g. after screen lock or idle timeout), auto-restore login state
+if saved_user and not st.session_state["user_authenticated"] and not st.session_state["switch_user_mode"]:
+    st.session_state["engineer_name"] = saved_user
+    st.session_state["user_authenticated"] = True
 
 try:
     SITE_USER_PASSWORD = st.secrets["USER_PASSWORD"]
@@ -68,7 +60,7 @@ if not st.session_state["user_authenticated"]:
     st.title("🚁 Helicopter Live Snag Log")
     authorized_list = get_authorized_engineers()
 
-    # SCENARIO A: Saved engineer remembered -> Ask Password Only
+    # SCENARIO A: Saved engineer remembered -> Quick Password Login
     if saved_user and not st.session_state["switch_user_mode"]:
         st.info(f"👋 Welcome back! Are you **{saved_user}**?")
 
@@ -120,6 +112,7 @@ if not st.session_state["user_authenticated"]:
                     st.session_state["user_authenticated"] = True
                     st.session_state["switch_user_mode"] = False
 
+                    # Store remembered engineer in query parameters
                     if remember_me:
                         st.query_params["remembered_user"] = target_name
 
@@ -133,7 +126,7 @@ if not st.session_state["user_authenticated"]:
     st.stop()  # Halts further rendering until authenticated
 
 # ---------------------------------------------------------
-# MAIN APP
+# MAIN APP (Renders once user is authenticated)
 # ---------------------------------------------------------
 st.title("🚁 Helicopter Live Snag Log")
 
@@ -179,6 +172,7 @@ if st.sidebar.button("Log Out / Switch Engineer"):
     st.session_state["engineer_name"] = ""
     st.session_state["user_authenticated"] = False
     st.session_state["switch_user_mode"] = True
+    # Clear remembered query param on logout
     if "remembered_user" in st.query_params:
         del st.query_params["remembered_user"]
     st.rerun()
@@ -194,12 +188,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Dashboard", "➕ Log New Snag", "�
 # TAB 1: LIVE DASHBOARD & EXPORT
 # ---------------------------------------------------------
 with tab1:
-    header_col1, header_col2 = st.columns([3, 1])
-    with header_col1:
-        st.subheader("Current Fleet Status")
-    with header_col2:
-        if st.button("🔄 Refresh Live Data", use_container_width=True):
-            st.rerun()
+    st.subheader("Current Fleet Status")
 
     search_col1, search_col2 = st.columns(2)
     with search_col1:
@@ -230,7 +219,7 @@ with tab1:
             open_count = len(df[df['status'] == 'Open'])
             st.metric(label="Open / Active Snags (Filtered)", value=open_count)
 
-            display_df = df[['id', 'aircraft', 'system', 'status', 'engineer', 'description', 'image_url', 'resolution', 'created_at']]
+            display_df = df[['id', 'created_at', 'aircraft', 'system', 'status', 'engineer', 'description', 'image_url', 'resolution']]
             st.dataframe(
                 display_df,
                 column_config={"image_url": st.column_config.LinkColumn("Photo", display_text="View Photo")},
@@ -238,27 +227,17 @@ with tab1:
                 hide_index=True
             )
 
-            st.markdown("---")
-            with st.expander("🖼️ Inspect Photo Attachment"):
+            with st.expander("🖼️ View Photos of Selected Snags"):
                 snags_with_photos = [
                     s for s in df.to_dict('records')
                     if s.get('image_url') and pd.notna(s.get('image_url')) and str(s.get('image_url')).strip() != ""
                 ]
                 if snags_with_photos:
-                    photo_options = {
-                        f"ID #{s['id']} - [{s['aircraft']}] {s['description'][:40]}...": s
-                        for s in snags_with_photos
-                    }
-                    selected_photo_label = st.selectbox(
-                        "Select a snag record to display its photo:",
-                        list(photo_options.keys())
-                    )
-                    chosen_snag = photo_options[selected_photo_label]
-
-                    st.caption(f"**Photo for Snag ID #{chosen_snag['id']}** | {chosen_snag['aircraft']} ({chosen_snag['system']}) logged by {chosen_snag['engineer']}")
-                    st.image(chosen_snag['image_url'], width=450)
+                    for s in snags_with_photos:
+                        st.caption(f"**ID #{s['id']} - {s['aircraft']}** logged by {s['engineer']}")
+                        st.image(s['image_url'], width=300)
                 else:
-                    st.info("No photo attachments in the current filter selection.")
+                    st.write("No photo attachments in the current filter selection.")
 
             # EXPORT SECTION
             st.markdown("---")
@@ -294,10 +273,6 @@ with tab1:
 # ---------------------------------------------------------
 with tab2:
     st.subheader("Report a Defect")
-
-    if st.session_state["snag_added_success_msg"]:
-        st.success(st.session_state["snag_added_success_msg"])
-        st.session_state["snag_added_success_msg"] = None  # Clear after display
 
     with st.form("new_snag_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -337,8 +312,7 @@ with tab2:
                     "image_url": image_url
                 }
                 supabase.table("snags").insert(new_entry).execute()
-
-                st.session_state["snag_added_success_msg"] = f"✅ Snag successfully recorded and saved for {aircraft}!"
+                st.success(f"Snag logged successfully for {aircraft}!")
                 st.rerun()
 
 # ---------------------------------------------------------
@@ -395,19 +369,10 @@ with tab3:
                 update_btn = st.form_submit_button("Save Update")
 
                 if update_btn:
-                    # DELETE PHOTO FROM STORAGE IF STATUS WAS CHANGED TO CLOSED
-                    if new_status == "Closed" and selected_snag.get("image_url"):
-                        delete_snag_photo_from_storage(selected_snag["image_url"])
-                        updated_image_url = None
-                    else:
-                        updated_image_url = selected_snag.get("image_url")
-
                     supabase.table("snags").update({
                         "status": new_status,
-                        "resolution": resolution,
-                        "image_url": updated_image_url
+                        "resolution": resolution
                     }).eq("id", selected_snag['id']).execute()
-
                     st.success(f"Snag ID #{selected_snag['id']} updated successfully!")
                     st.rerun()
         else:
@@ -427,6 +392,7 @@ with tab4:
     if all_data:
         df_analytics = pd.DataFrame(all_data)
 
+        # High-level summary metrics
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Recorded Snags", len(df_analytics))
         m2.metric("Open Snags", len(df_analytics[df_analytics['status'] == 'Open']))
@@ -435,6 +401,7 @@ with tab4:
 
         st.markdown("---")
 
+        # Chart Layout Row 1
         col_chart1, col_chart2 = st.columns(2)
 
         with col_chart1:
@@ -467,6 +434,7 @@ with tab4:
 
         st.markdown("---")
 
+        # Chart Layout Row 2
         st.markdown("#### Fleet Defect Matrix (A/C vs ATA Chapter)")
         pivot_df = df_analytics.pivot_table(index='system', columns='aircraft', aggfunc='size', fill_value=0)
         fig_heat = px.imshow(
@@ -499,7 +467,7 @@ with tab5:
         st.success("Admin Access Granted")
         st.markdown("---")
 
-        admin_sub1, admin_sub2, admin_sub3 = st.tabs(["👨‍🔧 Engineer User Control", "🚁 Fleet Management", "🗑️ Bulk Delete / Force Close Snags"])
+        admin_sub1, admin_sub2, admin_sub3 = st.tabs(["👨‍🔧 Engineer User Control", "🚁 Fleet Management", "🗑️ Delete / Force Close Snags"])
 
         with admin_sub1:
             st.write("### Manage Authorized Engineers List")
@@ -565,54 +533,27 @@ with tab5:
                     except Exception as e:
                         st.error(f"Error removing tail number: {e}")
 
-        # MULTI-SELECT BULK DELETE / CLOSE
         with admin_sub3:
-            st.write("### Bulk Manage Database Records")
-            response = supabase.table("snags").select("*").order("id", desc=True).execute()
+            st.write("### Manage Database Records")
+            response = supabase.table("snags").select("*").execute()
             all_snags = response.data
 
             if all_snags:
-                st.info("Select one or multiple snag records below to perform bulk actions.")
-                admin_snag_map = {
-                    f"ID #{s['id']} [{s['status']}] - {s['aircraft']}: {s['description'][:35]}...": s
-                    for s in all_snags
-                }
+                admin_snag_options = {f"ID #{s['id']} [{s['status']}] - {s['aircraft']}: {s['description'][:30]}...": s for s in all_snags}
+                del_selected_label = st.selectbox("Select Snag Record", list(admin_snag_options.keys()))
+                admin_selected_snag = admin_snag_options[del_selected_label]
 
-                selected_labels = st.multiselect(
-                    "Select Snag Records:",
-                    options=list(admin_snag_map.keys()),
-                    placeholder="Choose snags to modify or delete..."
-                )
-
-                if selected_labels:
-                    selected_records = [admin_snag_map[lbl] for lbl in selected_labels]
-                    selected_ids = [rec['id'] for rec in selected_records]
-                    st.write(f"**Selected {len(selected_ids)} snag(s)** (IDs: {', '.join(map(str, selected_ids))})")
-
-                    del_col1, del_col2 = st.columns(2)
-                    with del_col1:
-                        if st.button(f"❌ Delete {len(selected_ids)} Selected Record(s)", use_container_width=True):
-                            # Remove all attached photos from storage first
-                            for rec in selected_records:
-                                if rec.get("image_url"):
-                                    delete_snag_photo_from_storage(rec["image_url"])
-
-                            supabase.table("snags").delete().in_("id", selected_ids).execute()
-                            st.warning(f"Deleted {len(selected_ids)} snag record(s) and associated photo(s) from database.")
-                            st.rerun()
-
-                    with del_col2:
-                        if st.button(f"✅ Force Close {len(selected_ids)} Selected Record(s)", use_container_width=True):
-                            # Remove all attached photos from storage first
-                            for rec in selected_records:
-                                if rec.get("image_url"):
-                                    delete_snag_photo_from_storage(rec["image_url"])
-
-                            supabase.table("snags").update({"status": "Closed", "image_url": None}).in_("id", selected_ids).execute()
-                            st.success(f"Force-closed {len(selected_ids)} snag record(s) and cleared photo storage.")
-                            st.rerun()
-                else:
-                    st.caption("No snags selected yet. Click the box above to choose records.")
+                del_col1, del_col2 = st.columns(2)
+                with del_col1:
+                    if st.button("❌ Permanently Delete Record"):
+                        supabase.table("snags").delete().eq("id", admin_selected_snag['id']).execute()
+                        st.warning(f"Snag ID #{admin_selected_snag['id']} deleted from database.")
+                        st.rerun()
+                with del_col2:
+                    if st.button("✅ Force Close Snag"):
+                        supabase.table("snags").update({"status": "Closed"}).eq("id", admin_selected_snag['id']).execute()
+                        st.success(f"Snag ID #{admin_selected_snag['id']} forced to Closed status.")
+                        st.rerun()
             else:
                 st.info("The database is currently empty.")
 
