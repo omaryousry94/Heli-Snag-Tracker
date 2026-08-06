@@ -5,3 +5,4 @@ openpyxl
 Pillow
 plotly
 streamlit-js-eval
+streamlit-mic-recorder
