@@ -21,12 +21,14 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# Helper function to send instant email notifications
+# Helper function to send email notification for NEW snags
 def send_snag_email_notification(aircraft, system, engineer, status, description):
     try:
         sender_email = st.secrets["email"]["SENDER_EMAIL"]
         sender_password = st.secrets["email"]["SENDER_PASSWORD"]
-        recipient_email = st.secrets["email"]["NOTIFICATION_RECIPIENT"]
+        recipients = st.secrets["email"]["NOTIFICATION_RECIPIENT"]
+
+        recipient_list = [recipients] if isinstance(recipients, str) else recipients
 
         subject = f"🚁 NEW SNAG LOGGED: {aircraft} [{status}]"
 
@@ -48,16 +50,54 @@ def send_snag_email_notification(aircraft, system, engineer, status, description
 
         msg = MIMEMultipart()
         msg['From'] = sender_email
-        msg['To'] = recipient_email
+        msg['To'] = ", ".join(recipient_list)
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
 
-        # Connect to Gmail SMTP Server over SSL
         with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10) as server:
             server.login(sender_email, sender_password)
-            server.sendmail(sender_email, recipient_email, msg.as_string())
-    except Exception as e:
-        # Fail gracefully so email errors never block snag database entry
+            server.sendmail(sender_email, recipient_list, msg.as_string())
+    except Exception:
+        pass
+
+# Helper function to send email notification for UPDATED snags
+def send_snag_update_email_notification(snag_id, aircraft, system, engineer, old_status, new_status, resolution):
+    try:
+        sender_email = st.secrets["email"]["SENDER_EMAIL"]
+        sender_password = st.secrets["email"]["SENDER_PASSWORD"]
+        recipients = st.secrets["email"]["NOTIFICATION_RECIPIENT"]
+
+        recipient_list = [recipients] if isinstance(recipients, str) else recipients
+
+        subject = f"🔄 SNAG #{snag_id} UPDATED: {aircraft} [{old_status} ➔ {new_status}]"
+
+        body = f"""
+        A snag record has been updated in the Helicopter Snag Tracker:
+
+        • Snag ID: #{snag_id}
+        • Aircraft: {aircraft}
+        • ATA System / Chapter: {system}
+        • Updated By: {engineer}
+        • Status Change: {old_status} ➔ {new_status}
+
+        --------------------------------------------------
+        CORRECTIVE ACTION / MAINTENANCE NOTES:
+        {resolution if resolution.strip() else 'No notes provided.'}
+        --------------------------------------------------
+
+        Log into the dashboard to view live fleet status.
+        """
+
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = ", ".join(recipient_list)
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, recipient_list, msg.as_string())
+    except Exception:
         pass
 
 # Helper function to fetch authorized engineers list
@@ -77,7 +117,7 @@ def delete_snag_photo(image_url):
             file_name = str(image_url).split("/")[-1]
             supabase.storage.from_("snag-photos").remove([file_name])
         except Exception:
-            pass  # Fail gracefully if missing
+            pass
 
 # ---------------------------------------------------------
 # INITIAL SESSION STATE & AUTO-LOGIN QUERY PARAM RETRIEVAL
@@ -91,10 +131,8 @@ if "switch_user_mode" not in st.session_state:
 if "snag_added_success_msg" not in st.session_state:
     st.session_state["snag_added_success_msg"] = None
 
-# Fetch remembered user directly from Streamlit URL Query Params
 saved_user = st.query_params.get("remembered_user", None)
 
-# Auto-login restore if session state drops
 if saved_user and not st.session_state["user_authenticated"] and not st.session_state["switch_user_mode"]:
     st.session_state["engineer_name"] = saved_user
     st.session_state["user_authenticated"] = True
@@ -112,7 +150,6 @@ if not st.session_state["user_authenticated"]:
     st.title("🚁 Helicopter Live Snag Log")
     authorized_list = get_authorized_engineers()
 
-    # SCENARIO A: Saved engineer remembered -> Quick Password Login
     if saved_user and not st.session_state["switch_user_mode"]:
         st.info(f"👋 Welcome back! Are you **{saved_user}**?")
 
@@ -132,7 +169,6 @@ if not st.session_state["user_authenticated"]:
             st.session_state["switch_user_mode"] = True
             st.rerun()
 
-    # SCENARIO B: First-time login OR "Switch Engineer" clicked
     else:
         st.info("👋 Welcome! Select your authorized engineer name/ID and site password.")
 
@@ -174,7 +210,7 @@ if not st.session_state["user_authenticated"]:
                 st.session_state["switch_user_mode"] = False
                 st.rerun()
 
-    st.stop()  # Halts further rendering until authenticated
+    st.stop()
 
 # ---------------------------------------------------------
 # MAIN APP
@@ -341,7 +377,7 @@ with tab2:
 
     if st.session_state["snag_added_success_msg"]:
         st.success(st.session_state["snag_added_success_msg"])
-        st.session_state["snag_added_success_msg"] = None  # Clear after display
+        st.session_state["snag_added_success_msg"] = None
 
     with st.form("new_snag_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -381,10 +417,8 @@ with tab2:
                     "image_url": image_url
                 }
 
-                # 1. Insert into Supabase
                 supabase.table("snags").insert(new_entry).execute()
 
-                # 2. Trigger Instant Email Notification
                 send_snag_email_notification(
                     aircraft=aircraft,
                     system=system,
@@ -397,7 +431,7 @@ with tab2:
                 st.rerun()
 
 # ---------------------------------------------------------
-# TAB 3: UPDATE SNAG
+# TAB 3: UPDATE SNAG (WITH UPDATE EMAIL NOTIFICATION)
 # ---------------------------------------------------------
 with tab3:
     st.subheader("Update Existing Snag Status")
@@ -460,6 +494,17 @@ with tab3:
                         "resolution": resolution,
                         "image_url": final_image_url
                     }).eq("id", selected_snag['id']).execute()
+
+                    # TRIGGER EMAIL NOTIFICATION FOR UPDATE
+                    send_snag_update_email_notification(
+                        snag_id=selected_snag['id'],
+                        aircraft=selected_snag['aircraft'],
+                        system=selected_snag['system'],
+                        engineer=st.session_state["engineer_name"],
+                        old_status=selected_snag['status'],
+                        new_status=new_status,
+                        resolution=resolution
+                    )
 
                     st.success(f"Snag ID #{selected_snag['id']} updated successfully!")
                     st.rerun()
@@ -655,6 +700,15 @@ with tab5:
                         if st.button(f"✅ Force Close {len(selected_ids)} Selected Record(s)", use_container_width=True):
                             for s_obj in selected_snag_objs:
                                 delete_snag_photo(s_obj.get('image_url'))
+                                send_snag_update_email_notification(
+                                    snag_id=s_obj['id'],
+                                    aircraft=s_obj['aircraft'],
+                                    system=s_obj['system'],
+                                    engineer="System Admin",
+                                    old_status=s_obj['status'],
+                                    new_status="Closed",
+                                    resolution="Force Closed by Admin"
+                                )
 
                             supabase.table("snags").update({"status": "Closed", "image_url": None}).in_("id", selected_ids).execute()
                             st.success(f"Force-closed {len(selected_ids)} snag record(s) and cleaned up attached photos.")
