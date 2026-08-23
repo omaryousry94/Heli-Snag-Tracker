@@ -10,7 +10,7 @@ from PIL import Image
 import plotly.express as px
 
 # Page Configuration for Mobile
-st.set_page_config(page_title="Heli Snag Tracker", page_icon="🚁", layout="wide")
+st.set_page_config(page_title="Heli Snag Tracker2", page_icon="🚁", layout="wide")
 
 # Initialize Supabase Connection
 @st.cache_resource
