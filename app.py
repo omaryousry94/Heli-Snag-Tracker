@@ -571,7 +571,40 @@ with tab4:
                 st.error(f"Database error while saving filter: {ex}")
                 return False
 
+        # ---------------------------------------------------------
+        # CONCISE STATUS SUMMARY BAR AT TOP
+        # ---------------------------------------------------------
+        def get_status_badge(count):
+            if count >= 3:
+                return f"{count}/3 (REPLACE)", "🔴 Exceeded"
+            elif count == 2:
+                return f"{count}/3 (1 Left)", "🟡 Warning"
+            elif count == 1:
+                return f"{count}/3", "🔵 1st Clean"
+            else:
+                return "0/3", "🟢 Clean"
+
+        st.markdown(f"#### 📊 Summary for **{sel_ac}**")
+        sum_c1, sum_c2, sum_c3, sum_c4 = st.columns(4)
+
+        sum_cols = [sum_c1, sum_c2, sum_c3, sum_c4]
+        for idx, (mod_name, filt_type) in enumerate(STANDARD_POSITIONS):
+            rec = existing_rows.get((mod_name, filt_type))
+            cnt = int(rec["clean_count"]) if rec else 0
+            val_text, delta_lbl = get_status_badge(cnt)
+
+            with sum_cols[idx]:
+                st.metric(
+                    label=f"{mod_name} • {filt_type.replace(' Filter', '')}",
+                    value=val_text,
+                    delta=delta_lbl,
+                    delta_color="off" if cnt == 0 else "normal"
+                )
+
         st.markdown("---")
+        st.markdown("#### 🛠️ Manual Filter Actions & Controls")
+
+        # Display 2 columns for editing panels
         col_m1, col_m2 = st.columns(2)
 
         for mod_name, filt_type in STANDARD_POSITIONS:
