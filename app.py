@@ -252,35 +252,6 @@ ATA_CHAPTERS = [
     "Flight Controls"
 ]
 
-# Helper to ensure 4 filter records exist for an aircraft
-def get_or_create_aircraft_filters(ac_tail):
-    filters = []
-    for mod in ["Module 1", "Module 2"]:
-        for ftype in ["Pressure Filter", "Return Filter"]:
-            try:
-                res = supabase.table("hydraulic_filters").select("*").match({
-                    "aircraft": ac_tail,
-                    "module_name": mod,
-                    "filter_type": ftype
-                }).execute()
-
-                if res.data and len(res.data) > 0:
-                    filters.append(res.data[0])
-                else:
-                    new_rec = {
-                        "aircraft": ac_tail,
-                        "module_name": mod,
-                        "filter_type": ftype,
-                        "clean_count": 0,
-                        "history_log": f"Initialized for {ac_tail}"
-                    }
-                    ins = supabase.table("hydraulic_filters").insert(new_rec).execute()
-                    if ins.data:
-                        filters.append(ins.data[0])
-            except Exception:
-                pass
-    return filters
-
 # Sidebar - User Info & Quick Filters
 st.sidebar.header("Engineer Details")
 st.sidebar.write(f"Logged in as: **{st.session_state['engineer_name']}**")
@@ -549,7 +520,7 @@ with tab3:
         st.info("No active open snags available to update.")
 
 # ---------------------------------------------------------
-# TAB 4: AIRCRAFT UPDATES (MANUAL HYDRAULIC FILTER TRACKER)
+# TAB 4: AIRCRAFT UPDATES (INTERACTIVE HYDRAULIC FILTERS)
 # ---------------------------------------------------------
 with tab4:
     st.subheader("✈️ Aircraft Updates & Scheduled Trackers")
@@ -559,99 +530,143 @@ with tab4:
         st.info("📌 **Flex Coupling Seal Tracker:** Ready for workflow development.")
 
     with subtab2:
-        st.write("### 🚰 Hydraulic Filter Manual Cleaning Tracker (Max 3 Cleans)")
-        st.caption("Each helicopter has 2 Hydraulic Modules. Each module has 1 Pressure Filter and 1 Return Filter. Manage each filter independently below.")
+        st.write("### 🚰 Hydraulic Filter Cleaning Tracker (3-Clean Limit)")
+        st.caption("Each helicopter has 2 Hydraulic Modules (Module 1 & 2), with 1 Pressure and 1 Return filter each. Filters can be cleaned a maximum of 3 times.")
 
-        selected_ac = st.selectbox("🚁 Select Helicopter Tail Number:", FLEET_TAIL_NUMBERS, key="manual_hyd_ac")
+        sel_ac = st.selectbox("🚁 Select Helicopter Tail Number:", FLEET_TAIL_NUMBERS, key="sel_ac_hyd_tracker")
 
-        # Load or create the 4 filter positions for this helicopter
-        ac_filters = get_or_create_aircraft_filters(selected_ac)
+        # Load or initialize the 4 standard filter records for this aircraft
+        STANDARD_POSITIONS = [
+            ("Module 1", "Pressure Filter"),
+            ("Module 1", "Return Filter"),
+            ("Module 2", "Pressure Filter"),
+            ("Module 2", "Return Filter")
+        ]
+
+        filter_records = []
+        for mod_name, filt_type in STANDARD_POSITIONS:
+            try:
+                res = supabase.table("hydraulic_filters").select("*").eq("aircraft", sel_ac).eq("module_name", mod_name).eq("filter_type", filt_type).execute()
+                if res.data and len(res.data) > 0:
+                    filter_records.append(res.data[0])
+                else:
+                    # Auto-create if not yet in database
+                    new_item = {
+                        "aircraft": sel_ac,
+                        "module_name": mod_name,
+                        "filter_type": filt_type,
+                        "clean_count": 0,
+                        "history_log": f"Initialized for {sel_ac}"
+                    }
+                    ins_res = supabase.table("hydraulic_filters").insert(new_item).execute()
+                    if ins_res.data:
+                        filter_records.append(ins_res.data[0])
+            except Exception:
+                pass
 
         st.markdown("---")
 
-        # Display 2 columns: Module 1 on left, Module 2 on right
-        col_m1, col_m2 = st.columns(2)
+        # Display 2 Columns: Module 1 on left, Module 2 on right
+        col_mod1, col_mod2 = st.columns(2)
 
-        for filter_item in ac_filters:
-            mod = filter_item['module_name']
-            ftype = filter_item['filter_type']
-            f_id = filter_item['id']
-            curr_cleans = int(filter_item.get('clean_count', 0))
-            hist_log = filter_item.get('history_log', '')
+        for f_item in filter_records:
+            mod = f_item['module_name']
+            ftype = f_item['filter_type']
+            f_id = f_item['id']
+            curr_cleans = int(f_item.get('clean_count', 0))
+            hist_log = f_item.get('history_log', '')
 
-            target_col = col_m1 if mod == "Module 1" else col_m2
+            target_col = col_mod1 if mod == "Module 1" else col_mod2
 
             with target_col:
                 with st.container(border=True):
                     st.markdown(f"#### ⚙️ {mod} - **{ftype}**")
 
-                    # Status Indicator Badge
+                    # Visual status badge
                     if curr_cleans == 0:
-                        st.success("🟢 Status: Clean / New (0/3 Cleans Used)")
+                        st.success("🟢 **Status: Clean / New (0/3 Cleans Used)**")
                     elif curr_cleans == 1:
-                        st.info("🔵 Status: 1st Clean Completed (1/3 Cleans Used)")
+                        st.info("🔵 **Status: 1st Clean Completed (1/3 Cleans Used)**")
                     elif curr_cleans == 2:
-                        st.warning("🟡 Status: 2nd Clean Completed (2/3 Cleans Used - 1 Clean Left)")
+                        st.warning("🟡 **Status: 2nd Clean Completed (2/3 Cleans Used - 1 Clean Left!)**")
                     else:
-                        st.error("🔴 Status: 3/3 Cleans Used (MAX LIMIT REACHED - MUST REPLACE)")
+                        st.error("🔴 **Status: 3/3 Cleans Used (MAX LIMIT REACHED - MUST REPLACE!)**")
 
-                    # Manual Edit Form per Filter
-                    with st.form(key=f"filter_form_{f_id}"):
-                        new_clean_choice = st.radio(
-                            "Manual Cleaning Stage:",
-                            options=[0, 1, 2, 3],
-                            index=min(curr_cleans, 3),
-                            format_func=lambda x: {
-                                0: "0/3 - New / Clean (0 Cleans)",
-                                1: "1/3 - Cleaned Once (1st Clean)",
-                                2: "2/3 - Cleaned Twice (2nd Clean)",
-                                3: "3/3 - Cleaned 3 Times (EXHAUSTED)"
-                            }[x],
-                            key=f"rad_{f_id}"
-                        )
+                    st.write("")
 
-                        maint_notes = st.text_input("Maintenance / Work Order Notes", placeholder="e.g. Cleaned in ultrasonic bath per AMM 29-10", key=f"note_{f_id}")
+                    # Action Buttons
+                    act_c1, act_c2 = st.columns(2)
 
-                        btn_save = st.form_submit_button(f"💾 Save {mod} {ftype} Status", use_container_width=True)
+                    with act_c1:
+                        if curr_cleans < 3:
+                            if st.button(f"🧼 Log Clean ({curr_cleans + 1}/3)", key=f"btn_clean_{f_id}", use_container_width=True):
+                                timestamp = time.strftime('%Y-%m-%d %H:%M')
+                                new_entry_str = f"[{timestamp}] Logged Clean #{curr_cleans + 1} by {st.session_state['engineer_name']}"
+                                updated_hist = f"{new_entry_str}\n{hist_log}".strip()
 
-                        if btn_save:
+                                supabase.table("hydraulic_filters").update({
+                                    "clean_count": curr_cleans + 1,
+                                    "history_log": updated_hist,
+                                    "last_updated_by": st.session_state["engineer_name"],
+                                    "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
+                                }).eq("id", f_id).execute()
+
+                                st.success(f"Clean #{curr_cleans + 1} recorded!")
+                                st.rerun()
+                        else:
+                            st.caption("⛔ 3-clean limit reached. Replace filter.")
+
+                    with act_c2:
+                        if st.button("🔄 Installed New (Reset 0/3)", key=f"btn_reset_{f_id}", use_container_width=True):
                             timestamp = time.strftime('%Y-%m-%d %H:%M')
-                            new_entry_str = f"[{timestamp}] Set to {new_clean_choice}/3 by {st.session_state['engineer_name']}"
-                            if maint_notes.strip():
-                                new_entry_str += f" - Note: {maint_notes.strip()}"
-
-                            updated_hist = f"{new_entry_str}\n{hist_log}".strip()
+                            reset_entry = f"[{timestamp}] New Filter Installed (Counter Reset to 0/3) by {st.session_state['engineer_name']}"
+                            updated_hist = f"{reset_entry}\n{hist_log}".strip()
 
                             supabase.table("hydraulic_filters").update({
-                                "clean_count": new_clean_choice,
+                                "clean_count": 0,
                                 "history_log": updated_hist,
                                 "last_updated_by": st.session_state["engineer_name"],
                                 "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
                             }).eq("id", f_id).execute()
 
-                            st.success(f"Updated {mod} {ftype} to {new_clean_choice}/3!")
+                            st.success("Reset to 0/3!")
                             st.rerun()
 
-                    # Direct 1-Click Replace / Reset Button
-                    if st.button(f"🔄 Installed New Filter (Reset {mod} {ftype} to 0/3)", key=f"reset_btn_{f_id}", use_container_width=True):
-                        timestamp = time.strftime('%Y-%m-%d %H:%M')
-                        reset_entry = f"[{timestamp}] New Filter Installed (Counter Reset to 0/3) by {st.session_state['engineer_name']}"
-                        updated_hist = f"{reset_entry}\n{hist_log}".strip()
+                    # Manual Override Expander
+                    with st.expander("🛠️ Manual Edit / Add Maintenance Notes"):
+                        with st.form(key=f"manual_edit_form_{f_id}"):
+                            new_count = st.radio(
+                                "Set Clean Count:",
+                                options=[0, 1, 2, 3],
+                                index=min(curr_cleans, 3),
+                                horizontal=True,
+                                key=f"rad_count_{f_id}"
+                            )
+                            custom_note = st.text_input("Work Order / Cleaning Notes", placeholder="e.g. Ultrasonic cleaned per AMM 29-10", key=f"note_input_{f_id}")
+                            save_edit = st.form_submit_button("Save Changes", use_container_width=True)
 
-                        supabase.table("hydraulic_filters").update({
-                            "clean_count": 0,
-                            "history_log": updated_hist,
-                            "last_updated_by": st.session_state["engineer_name"],
-                            "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
-                        }).eq("id", f_id).execute()
-                        st.success(f"Reset {mod} {ftype} to 0/3!")
-                        st.rerun()
+                            if save_edit:
+                                timestamp = time.strftime('%Y-%m-%d %H:%M')
+                                edit_entry = f"[{timestamp}] Manually set to {new_count}/3 by {st.session_state['engineer_name']}"
+                                if custom_note.strip():
+                                    edit_entry += f" - Note: {custom_note.strip()}"
+                                updated_hist = f"{edit_entry}\n{hist_log}".strip()
 
-                    with st.expander("📜 View Maintenance History Log"):
+                                supabase.table("hydraulic_filters").update({
+                                    "clean_count": new_count,
+                                    "history_log": updated_hist,
+                                    "last_updated_by": st.session_state["engineer_name"],
+                                    "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
+                                }).eq("id", f_id).execute()
+
+                                st.success("Saved!")
+                                st.rerun()
+
+                    with st.expander("📜 History Log"):
                         if hist_log.strip():
                             st.text(hist_log)
                         else:
-                            st.caption("No history recorded yet.")
+                            st.caption("No entries recorded yet.")
 
 # ---------------------------------------------------------
 # TAB 5: FLEET RELIABILITY ANALYTICS DASHBOARD
@@ -785,8 +800,7 @@ with tab6:
                     if new_tail.strip():
                         try:
                             supabase.table("fleet").insert({"tail_number": new_tail.strip()}).execute()
-                            get_or_create_aircraft_filters(new_tail.strip())
-                            st.success(f"Added {new_tail.strip()} to fleet & initialized filter records!")
+                            st.success(f"Added {new_tail.strip()} to fleet!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error adding tail number: {e}")
