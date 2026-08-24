@@ -546,24 +546,30 @@ with tab4:
         try:
             db_res = supabase.table("hydraulic_filters").select("*").eq("aircraft", sel_ac).execute()
             existing_rows = { (r["module_name"], r["filter_type"]): r for r in db_res.data } if db_res.data else {}
-        except Exception:
+        except Exception as e:
             existing_rows = {}
+            st.error(f"Error loading filters: {e}")
 
-        # Helper function to reliably save record (Update if exists, else Insert)
+        # Safe update/insert helper function
         def save_filter_record(ac, mod, ftype, new_cnt, hist_text, existing_id=None):
             payload = {
-                "aircraft": ac,
-                "module_name": mod,
-                "filter_type": ftype,
-                "clean_count": new_cnt,
-                "history_log": hist_text,
-                "last_updated_by": st.session_state["engineer_name"],
+                "aircraft": str(ac),
+                "module_name": str(mod),
+                "filter_type": str(ftype),
+                "clean_count": int(new_cnt),
+                "history_log": str(hist_text),
+                "last_updated_by": str(st.session_state["engineer_name"]),
                 "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
             }
-            if existing_id:
-                supabase.table("hydraulic_filters").update(payload).eq("id", existing_id).execute()
-            else:
-                supabase.table("hydraulic_filters").insert(payload).execute()
+            try:
+                if existing_id:
+                    supabase.table("hydraulic_filters").update(payload).eq("id", existing_id).execute()
+                else:
+                    supabase.table("hydraulic_filters").insert(payload).execute()
+                return True
+            except Exception as ex:
+                st.error(f"Database error while saving filter: {ex}")
+                return False
 
         st.markdown("---")
         col_m1, col_m2 = st.columns(2)
@@ -574,7 +580,7 @@ with tab4:
 
             f_id = record["id"] if record else None
             curr_cleans = int(record["clean_count"]) if record else 0
-            hist_log = record.get("history_log", "") if record else ""
+            hist_log = str(record.get("history_log", "")) if record else ""
 
             with target_col:
                 with st.container(border=True):
@@ -600,9 +606,9 @@ with tab4:
                                 new_entry = f"[{timestamp}] Logged Clean #{curr_cleans + 1} by {st.session_state['engineer_name']}"
                                 updated_hist = f"{new_entry}\n{hist_log}".strip()
 
-                                save_filter_record(sel_ac, mod_name, filt_type, curr_cleans + 1, updated_hist, f_id)
-                                st.success(f"Logged clean #{curr_cleans + 1}!")
-                                st.rerun()
+                                if save_filter_record(sel_ac, mod_name, filt_type, curr_cleans + 1, updated_hist, f_id):
+                                    st.success(f"Logged clean #{curr_cleans + 1}!")
+                                    st.rerun()
                         else:
                             st.caption("⛔ 3-clean limit reached.")
 
@@ -613,9 +619,9 @@ with tab4:
                             reset_entry = f"[{timestamp}] New Filter Installed (Reset to 0/3) by {st.session_state['engineer_name']}"
                             updated_hist = f"{reset_entry}\n{hist_log}".strip()
 
-                            save_filter_record(sel_ac, mod_name, filt_type, 0, updated_hist, f_id)
-                            st.success("Reset to 0/3!")
-                            st.rerun()
+                            if save_filter_record(sel_ac, mod_name, filt_type, 0, updated_hist, f_id):
+                                st.success("Reset to 0/3!")
+                                st.rerun()
 
                     # 3. MANUAL EDIT FORM
                     with st.expander("🛠️ Manual Edit / Add Maintenance Notes"):
@@ -637,9 +643,9 @@ with tab4:
                                     edit_entry += f" - Note: {notes.strip()}"
                                 updated_hist = f"{edit_entry}\n{hist_log}".strip()
 
-                                save_filter_record(sel_ac, mod_name, filt_type, new_count, updated_hist, f_id)
-                                st.success("Saved!")
-                                st.rerun()
+                                if save_filter_record(sel_ac, mod_name, filt_type, new_count, updated_hist, f_id):
+                                    st.success("Saved!")
+                                    st.rerun()
 
                     with st.expander("📜 History Log"):
                         if hist_log.strip():
