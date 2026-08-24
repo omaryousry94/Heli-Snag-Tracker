@@ -267,8 +267,15 @@ st.sidebar.markdown("---")
 st.sidebar.header("Filter Snags")
 status_filter = st.sidebar.multiselect("Status", ["Open", "In Progress", "Deferred", "Closed"], default=["Open", "In Progress", "Deferred"])
 
-# Navigation Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Dashboard", "➕ Log New Snag", "✏️ Update Snag", "📊 Analytics", "🔒 Admin Controls"])
+# Navigation Tabs (Added Aircraft Updates)
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📋 Dashboard",
+    "➕ Log New Snag",
+    "✏️ Update Snag",
+    "✈️ Aircraft Updates",
+    "📊 Analytics",
+    "🔒 Admin Controls"
+])
 
 # ---------------------------------------------------------
 # TAB 1: LIVE DASHBOARD & EXPORT
@@ -431,7 +438,7 @@ with tab2:
                 st.rerun()
 
 # ---------------------------------------------------------
-# TAB 3: UPDATE SNAG (WITH UPDATE EMAIL NOTIFICATION)
+# TAB 3: UPDATE SNAG
 # ---------------------------------------------------------
 with tab3:
     st.subheader("Update Existing Snag Status")
@@ -495,7 +502,6 @@ with tab3:
                         "image_url": final_image_url
                     }).eq("id", selected_snag['id']).execute()
 
-                    # TRIGGER EMAIL NOTIFICATION FOR UPDATE
                     send_snag_update_email_notification(
                         snag_id=selected_snag['id'],
                         aircraft=selected_snag['aircraft'],
@@ -514,9 +520,22 @@ with tab3:
         st.info("No active open snags available to update.")
 
 # ---------------------------------------------------------
-# TAB 4: FLEET RELIABILITY ANALYTICS DASHBOARD
+# TAB 4: AIRCRAFT UPDATES (NEW SECTION)
 # ---------------------------------------------------------
 with tab4:
+    st.subheader("✈️ Aircraft Updates & Scheduled Trackers")
+    subtab1, subtab2 = st.tabs(["🔩 Flex Coupling Seal", "🚰 Hydraulic Filter Cleaning"])
+
+    with subtab1:
+        st.info("📌 **Flex Coupling Seal Tracker:** Ready for workflow development.")
+
+    with subtab2:
+        st.info("📌 **Hydraulic Filter Cleaning Tracker:** Ready for workflow development.")
+
+# ---------------------------------------------------------
+# TAB 5: FLEET RELIABILITY ANALYTICS DASHBOARD
+# ---------------------------------------------------------
+with tab5:
     st.subheader("📈 Fleet Reliability & Defect Metrics")
 
     response_all = supabase.table("snags").select("*").execute()
@@ -580,9 +599,9 @@ with tab4:
         st.info("No data available to build analytics charts yet.")
 
 # ---------------------------------------------------------
-# TAB 5: ADMIN CONTROLS
+# TAB 6: ADMIN CONTROLS
 # ---------------------------------------------------------
-with tab5:
+with tab6:
     st.subheader("Admin Access Required")
 
     try:
