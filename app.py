@@ -520,7 +520,7 @@ with tab3:
         st.info("No active open snags available to update.")
 
 # ---------------------------------------------------------
-# TAB 4: AIRCRAFT UPDATES (ROBUST HYDRAULIC FILTERS)
+# TAB 4: AIRCRAFT UPDATES (SAFE PERSISTENCE FOR HYDRAULICS)
 # ---------------------------------------------------------
 with tab4:
     st.subheader("✈️ Aircraft Updates & Scheduled Trackers")
@@ -535,7 +535,6 @@ with tab4:
 
         sel_ac = st.selectbox("🚁 Select Helicopter Tail Number:", FLEET_TAIL_NUMBERS, key="sel_ac_hyd_tracker")
 
-        # Define standard 4 filter positions
         STANDARD_POSITIONS = [
             ("Module 1", "Pressure Filter"),
             ("Module 1", "Return Filter"),
@@ -543,16 +542,30 @@ with tab4:
             ("Module 2", "Return Filter")
         ]
 
-        # Load from DB
+        # Load existing records for this aircraft
         try:
             db_res = supabase.table("hydraulic_filters").select("*").eq("aircraft", sel_ac).execute()
             existing_rows = { (r["module_name"], r["filter_type"]): r for r in db_res.data } if db_res.data else {}
         except Exception:
             existing_rows = {}
 
-        st.markdown("---")
+        # Helper function to reliably save record (Update if exists, else Insert)
+        def save_filter_record(ac, mod, ftype, new_cnt, hist_text, existing_id=None):
+            payload = {
+                "aircraft": ac,
+                "module_name": mod,
+                "filter_type": ftype,
+                "clean_count": new_cnt,
+                "history_log": hist_text,
+                "last_updated_by": st.session_state["engineer_name"],
+                "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            if existing_id:
+                supabase.table("hydraulic_filters").update(payload).eq("id", existing_id).execute()
+            else:
+                supabase.table("hydraulic_filters").insert(payload).execute()
 
-        # Render 2 columns
+        st.markdown("---")
         col_m1, col_m2 = st.columns(2)
 
         for mod_name, filt_type in STANDARD_POSITIONS:
@@ -577,7 +590,6 @@ with tab4:
                         st.error("🔴 **Status: 3/3 Cleans Used (MAX LIMIT - REPLACE FILTER)**")
 
                     st.write("")
-
                     btn_col1, btn_col2 = st.columns(2)
 
                     # 1. LOG CLEAN BUTTON
@@ -588,16 +600,7 @@ with tab4:
                                 new_entry = f"[{timestamp}] Logged Clean #{curr_cleans + 1} by {st.session_state['engineer_name']}"
                                 updated_hist = f"{new_entry}\n{hist_log}".strip()
 
-                                supabase.table("hydraulic_filters").upsert({
-                                    "aircraft": sel_ac,
-                                    "module_name": mod_name,
-                                    "filter_type": filt_type,
-                                    "clean_count": curr_cleans + 1,
-                                    "history_log": updated_hist,
-                                    "last_updated_by": st.session_state["engineer_name"],
-                                    "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
-                                }, on_conflict="aircraft, module_name, filter_type").execute()
-
+                                save_filter_record(sel_ac, mod_name, filt_type, curr_cleans + 1, updated_hist, f_id)
                                 st.success(f"Logged clean #{curr_cleans + 1}!")
                                 st.rerun()
                         else:
@@ -610,16 +613,7 @@ with tab4:
                             reset_entry = f"[{timestamp}] New Filter Installed (Reset to 0/3) by {st.session_state['engineer_name']}"
                             updated_hist = f"{reset_entry}\n{hist_log}".strip()
 
-                            supabase.table("hydraulic_filters").upsert({
-                                "aircraft": sel_ac,
-                                "module_name": mod_name,
-                                "filter_type": filt_type,
-                                "clean_count": 0,
-                                "history_log": updated_hist,
-                                "last_updated_by": st.session_state["engineer_name"],
-                                "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
-                            }, on_conflict="aircraft, module_name, filter_type").execute()
-
+                            save_filter_record(sel_ac, mod_name, filt_type, 0, updated_hist, f_id)
                             st.success("Reset to 0/3!")
                             st.rerun()
 
@@ -643,16 +637,7 @@ with tab4:
                                     edit_entry += f" - Note: {notes.strip()}"
                                 updated_hist = f"{edit_entry}\n{hist_log}".strip()
 
-                                supabase.table("hydraulic_filters").upsert({
-                                    "aircraft": sel_ac,
-                                    "module_name": mod_name,
-                                    "filter_type": filt_type,
-                                    "clean_count": new_count,
-                                    "history_log": updated_hist,
-                                    "last_updated_by": st.session_state["engineer_name"],
-                                    "last_updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
-                                }, on_conflict="aircraft, module_name, filter_type").execute()
-
+                                save_filter_record(sel_ac, mod_name, filt_type, new_count, updated_hist, f_id)
                                 st.success("Saved!")
                                 st.rerun()
 
