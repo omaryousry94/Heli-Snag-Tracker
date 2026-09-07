@@ -520,15 +520,16 @@ with tab3:
         st.info("No active open snags available to update.")
 
 # ---------------------------------------------------------
-# TAB 4: AIRCRAFT UPDATES (SAFE PERSISTENCE FOR HYDRAULICS)
+# TAB 4: AIRCRAFT UPDATES
 # ---------------------------------------------------------
 with tab4:
     st.subheader("✈️ Aircraft Updates & Scheduled Trackers")
-    subtab1, subtab2 = st.tabs(["🔩 Flex Coupling Seal", "🚰 Hydraulic Filter Cleaning"])
+    subtab1, subtab2, subtab3 = st.tabs(["🔩 Flex Coupling Seal", "🚰 Hydraulic Filter Cleaning", "📸 100 Hrs Measurements"])
 
     with subtab1:
         st.info("📌 **Flex Coupling Seal Tracker:** Ready for workflow development.")
 
+    # --- SUBTAB 2: HYDRAULIC FILTER CLEANING ---
     with subtab2:
         st.write("### 🚰 Hydraulic Filter Cleaning Tracker (3-Clean Limit)")
         st.caption("Each helicopter has 2 Hydraulic Modules (Module 1 & 2), each with 1 Pressure Filter and 1 Return Filter.")
@@ -571,9 +572,7 @@ with tab4:
                 st.error(f"Database error while saving filter: {ex}")
                 return False
 
-        # ---------------------------------------------------------
-        # CONCISE STATUS SUMMARY BAR AT TOP (WITH NO RECORD SUPPORT)
-        # ---------------------------------------------------------
+        # Summary Bar at Top
         def get_status_badge(count):
             if count == -1:
                 return "No Record", "⚪ Unknown"
@@ -606,7 +605,6 @@ with tab4:
         st.markdown("---")
         st.markdown("#### 🛠️ Manual Filter Actions & Controls")
 
-        # Display 2 columns for editing panels
         col_m1, col_m2 = st.columns(2)
 
         for mod_name, filt_type in STANDARD_POSITIONS:
@@ -662,7 +660,7 @@ with tab4:
                                 st.success("Reset to 0/3!")
                                 st.rerun()
 
-                    # 3. MANUAL EDIT FORM (WITH "NO RECORD" OPTION)
+                    # 3. MANUAL EDIT FORM
                     with st.expander("🛠️ Manual Edit / Add Maintenance Notes"):
                         with st.form(key=f"form_{mod_name}_{filt_type}"):
                             clean_options = [-1, 0, 1, 2, 3]
@@ -702,6 +700,85 @@ with tab4:
                             st.text(hist_log)
                         else:
                             st.caption("No history recorded yet.")
+
+    # --- SUBTAB 3: 100 HRS MEASUREMENTS ---
+    with subtab3:
+        st.write("### 📸 100 Hrs Inspection Measurements")
+        st.caption("Upload and inspect the active 100-hour inspection measurements sheet. Uploading a new photo replaces and removes the previous one for that aircraft.")
+
+        sel_ac_100hr = st.selectbox("🚁 Select Helicopter Tail Number:", FLEET_TAIL_NUMBERS, key="sel_ac_100hr_tracker")
+
+        # Query current measurement record for this aircraft
+        record_100hr = None
+        try:
+            res_100 = supabase.table("aircraft_100hr_measurements").select("*").eq("aircraft", sel_ac_100hr).execute()
+            if res_100.data and len(res_100.data) > 0:
+                record_100hr = res_100.data[0]
+        except Exception as e:
+            st.error(f"Database error reading 100 Hrs table: {e}")
+
+        curr_image_url = record_100hr.get("image_url") if record_100hr else None
+
+        st.markdown("---")
+        disp_col, up_col = st.columns([1.2, 1])
+
+        with disp_col:
+            st.markdown("#### 100 Hrs Inspection Measurements")
+            if curr_image_url and pd.notna(curr_image_url) and str(curr_image_url).strip() != "":
+                up_by = record_100hr.get("uploaded_by", "Unknown")
+                up_at = record_100hr.get("uploaded_at", "Unknown date")
+                st.caption(f"**Aircraft:** `{sel_ac_100hr}` | **Uploaded by:** `{up_by}` | **Date:** `{up_at}`")
+                st.image(curr_image_url, caption="100 Hrs Inspection Measurements", use_container_width=True)
+
+                if st.button("🗑️ Delete Current Photo", key=f"del_photo_{sel_ac_100hr}"):
+                    delete_snag_photo(curr_image_url)
+                    supabase.table("aircraft_100hr_measurements").delete().eq("aircraft", sel_ac_100hr).execute()
+                    st.warning(f"Measurement photo deleted for {sel_ac_100hr}.")
+                    st.rerun()
+            else:
+                st.info(f"No 100 Hrs inspection photo currently on file for **{sel_ac_100hr}**.")
+
+        with up_col:
+            st.markdown("#### 📤 Upload / Replace Photo")
+            with st.form(key=f"form_100hr_{sel_ac_100hr}", clear_on_submit=True):
+                new_file = st.file_uploader("Take photo or upload measurement document", type=["jpg", "jpeg", "png"], key=f"upload_{sel_ac_100hr}")
+                submit_upload = st.form_submit_button("💾 Save 100 Hrs Inspection Measurements", use_container_width=True)
+
+                if submit_upload:
+                    if new_file is not None:
+                        # 1. Erase previous photo from storage if exists
+                        if curr_image_url:
+                            delete_snag_photo(curr_image_url)
+
+                        # 2. Compress and upload new photo
+                        compressed_bytes = compress_image(new_file, max_size=(1600, 1600), quality=80)
+                        clean_tail = sel_ac_100hr.replace(" ", "_").replace("/", "_")
+                        file_path = f"100hr_{clean_tail}_{int(time.time())}.jpg"
+
+                        supabase.storage.from_("snag-photos").upload(
+                            path=file_path,
+                            file=compressed_bytes,
+                            file_options={"content-type": "image/jpeg", "upsert": "true"}
+                        )
+                        new_public_url = supabase.storage.from_("snag-photos").get_public_url(file_path)
+
+                        # 3. Save / Upsert record in database
+                        payload_100 = {
+                            "aircraft": sel_ac_100hr,
+                            "image_url": new_public_url,
+                            "uploaded_by": st.session_state["engineer_name"],
+                            "uploaded_at": time.strftime('%Y-%m-%d %H:%M:%S')
+                        }
+
+                        if record_100hr:
+                            supabase.table("aircraft_100hr_measurements").update(payload_100).eq("aircraft", sel_ac_100hr).execute()
+                        else:
+                            supabase.table("aircraft_100hr_measurements").insert(payload_100).execute()
+
+                        st.success(f"100 Hrs Inspection Measurements saved for {sel_ac_100hr}!")
+                        st.rerun()
+                    else:
+                        st.error("Please choose or capture a photo first.")
 
 # ---------------------------------------------------------
 # TAB 5: FLEET RELIABILITY ANALYTICS DASHBOARD
@@ -849,6 +926,7 @@ with tab6:
                     try:
                         supabase.table("fleet").delete().eq("tail_number", tail_to_remove).execute()
                         supabase.table("hydraulic_filters").delete().eq("aircraft", tail_to_remove).execute()
+                        supabase.table("aircraft_100hr_measurements").delete().eq("aircraft", tail_to_remove).execute()
                         st.warning(f"Removed {tail_to_remove} from active fleet!")
                         st.rerun()
                     except Exception as e:
