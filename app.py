@@ -572,10 +572,12 @@ with tab4:
                 return False
 
         # ---------------------------------------------------------
-        # CONCISE STATUS SUMMARY BAR AT TOP
+        # CONCISE STATUS SUMMARY BAR AT TOP (WITH NO RECORD SUPPORT)
         # ---------------------------------------------------------
         def get_status_badge(count):
-            if count >= 3:
+            if count == -1:
+                return "No Record", "⚪ Unknown"
+            elif count >= 3:
                 return f"{count}/3 (REPLACE)", "🔴 Exceeded"
             elif count == 2:
                 return f"{count}/3 (1 Left)", "🟡 Warning"
@@ -598,7 +600,7 @@ with tab4:
                     label=f"{mod_name} • {filt_type.replace(' Filter', '')}",
                     value=val_text,
                     delta=delta_lbl,
-                    delta_color="off" if cnt == 0 else "normal"
+                    delta_color="off" if cnt in (0, -1) else "normal"
                 )
 
         st.markdown("---")
@@ -619,7 +621,9 @@ with tab4:
                 with st.container(border=True):
                     st.markdown(f"#### ⚙️ {mod_name} - **{filt_type}**")
 
-                    if curr_cleans == 0:
+                    if curr_cleans == -1:
+                        st.info("⚪ **Status: No Record / Unknown History**")
+                    elif curr_cleans == 0:
                         st.success("🟢 **Status: Clean / New (0/3 Cleans Used)**")
                     elif curr_cleans == 1:
                         st.info("🔵 **Status: 1st Clean Done (1/3 Cleans Used)**")
@@ -634,13 +638,15 @@ with tab4:
                     # 1. LOG CLEAN BUTTON
                     with btn_col1:
                         if curr_cleans < 3:
-                            if st.button(f"🧼 Log Clean ({curr_cleans + 1}/3)", key=f"clean_btn_{mod_name}_{filt_type}", use_container_width=True):
+                            next_cnt = 1 if curr_cleans == -1 else curr_cleans + 1
+                            if st.button(f"🧼 Log Clean ({next_cnt}/3)", key=f"clean_btn_{mod_name}_{filt_type}", use_container_width=True):
                                 timestamp = time.strftime('%Y-%m-%d %H:%M')
-                                new_entry = f"[{timestamp}] Logged Clean #{curr_cleans + 1} by {st.session_state['engineer_name']}"
+                                note_detail = " (Previously No Record)" if curr_cleans == -1 else ""
+                                new_entry = f"[{timestamp}] Logged Clean #{next_cnt}{note_detail} by {st.session_state['engineer_name']}"
                                 updated_hist = f"{new_entry}\n{hist_log}".strip()
 
-                                if save_filter_record(sel_ac, mod_name, filt_type, curr_cleans + 1, updated_hist, f_id):
-                                    st.success(f"Logged clean #{curr_cleans + 1}!")
+                                if save_filter_record(sel_ac, mod_name, filt_type, next_cnt, updated_hist, f_id):
+                                    st.success(f"Logged clean #{next_cnt}!")
                                     st.rerun()
                         else:
                             st.caption("⛔ 3-clean limit reached.")
@@ -656,13 +662,23 @@ with tab4:
                                 st.success("Reset to 0/3!")
                                 st.rerun()
 
-                    # 3. MANUAL EDIT FORM
+                    # 3. MANUAL EDIT FORM (WITH "NO RECORD" OPTION)
                     with st.expander("🛠️ Manual Edit / Add Maintenance Notes"):
                         with st.form(key=f"form_{mod_name}_{filt_type}"):
+                            clean_options = [-1, 0, 1, 2, 3]
+                            current_index = clean_options.index(curr_cleans) if curr_cleans in clean_options else 0
+
                             new_count = st.radio(
                                 "Select Cleaning Stage:",
-                                options=[0, 1, 2, 3],
-                                index=min(curr_cleans, 3),
+                                options=clean_options,
+                                index=current_index,
+                                format_func=lambda x: {
+                                    -1: "No Record (Unknown)",
+                                    0: "0/3 (New / Clean)",
+                                    1: "1/3 (1st Clean)",
+                                    2: "2/3 (2nd Clean)",
+                                    3: "3/3 (Max / Replace)"
+                                }[x],
                                 horizontal=True,
                                 key=f"rad_{mod_name}_{filt_type}"
                             )
@@ -671,7 +687,8 @@ with tab4:
 
                             if save_btn:
                                 timestamp = time.strftime('%Y-%m-%d %H:%M')
-                                edit_entry = f"[{timestamp}] Manually set to {new_count}/3 by {st.session_state['engineer_name']}"
+                                stage_label = "No Record" if new_count == -1 else f"{new_count}/3"
+                                edit_entry = f"[{timestamp}] Manually set to {stage_label} by {st.session_state['engineer_name']}"
                                 if notes.strip():
                                     edit_entry += f" - Note: {notes.strip()}"
                                 updated_hist = f"{edit_entry}\n{hist_log}".strip()
