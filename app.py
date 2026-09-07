@@ -660,7 +660,7 @@ with tab4:
                                 st.success("Reset to 0/3!")
                                 st.rerun()
 
-                    # 3. MANUAL EDIT FORM
+                    # 3. MANUAL EDIT FORM (WITH "NO RECORD" OPTION)
                     with st.expander("🛠️ Manual Edit / Add Maintenance Notes"):
                         with st.form(key=f"form_{mod_name}_{filt_type}"):
                             clean_options = [-1, 0, 1, 2, 3]
@@ -750,8 +750,8 @@ with tab4:
                         if curr_image_url:
                             delete_snag_photo(curr_image_url)
 
-                        # 2. Compress and upload new photo
-                        compressed_bytes = compress_image(new_file, max_size=(1600, 1600), quality=80)
+                        # 2. Compress image using identical settings to snag photos
+                        compressed_bytes = compress_image(new_file, max_size=(1024, 1024), quality=75)
                         clean_tail = sel_ac_100hr.replace(" ", "_").replace("/", "_")
                         file_path = f"100hr_{clean_tail}_{int(time.time())}.jpg"
 
