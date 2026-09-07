@@ -864,7 +864,12 @@ with tab6:
         st.success("Admin Access Granted")
         st.markdown("---")
 
-        admin_sub1, admin_sub2, admin_sub3 = st.tabs(["👨‍🔧 Engineer User Control", "🚁 Fleet Management", "🗑️ Bulk Delete / Force Close Snags"])
+        admin_sub1, admin_sub2, admin_sub3, admin_sub4 = st.tabs([
+            "👨‍🔧 Engineer User Control",
+            "🚁 Fleet Management",
+            "🗑️ Bulk Delete / Force Close Snags",
+            "🚰 Hydraulic Filter History"
+        ])
 
         with admin_sub1:
             st.write("### Manage Authorized Engineers List")
@@ -985,6 +990,53 @@ with tab6:
                     st.caption("No snags selected yet. Click the box above to choose records.")
             else:
                 st.info("The database is currently empty.")
+
+        # --- ADMIN SUBTAB 4: MANAGE HYDRAULIC FILTER HISTORY ---
+        with admin_sub4:
+            st.write("### 🚰 Manage & Clear Hydraulic Filter History Logs")
+            st.info("Clear audit logs for individual filter positions, entire aircraft, or the entire fleet.")
+
+            adm_col1, adm_col2 = st.columns(2)
+
+            with adm_col1:
+                st.markdown("#### Option 1: Clear Single Filter Log")
+                ac_pick = st.selectbox("Select Aircraft", FLEET_TAIL_NUMBERS, key="adm_hist_ac")
+                mod_pick = st.selectbox("Select Module", ["Module 1", "Module 2"], key="adm_hist_mod")
+                filt_pick = st.selectbox("Select Filter Type", ["Pressure Filter", "Return Filter"], key="adm_hist_type")
+
+                if st.button("🗑️ Clear Log for this Filter", use_container_width=True):
+                    try:
+                        supabase.table("hydraulic_filters").update({
+                            "history_log": ""
+                        }).eq("aircraft", ac_pick).eq("module_name", mod_pick).eq("filter_type", filt_pick).execute()
+                        st.success(f"History log cleared for {ac_pick} [{mod_pick} - {filt_pick}].")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to clear log: {e}")
+
+            with adm_col2:
+                st.markdown("#### Option 2: Bulk Clear Logs")
+                ac_bulk_pick = st.selectbox("Select Aircraft for All 4 Filters", FLEET_TAIL_NUMBERS, key="adm_hist_bulk_ac")
+                if st.button(f"⚠️ Clear All 4 Filter Logs for {ac_bulk_pick}", use_container_width=True):
+                    try:
+                        supabase.table("hydraulic_filters").update({
+                            "history_log": ""
+                        }).eq("aircraft", ac_bulk_pick).execute()
+                        st.warning(f"All filter history logs cleared for {ac_bulk_pick}.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to bulk clear logs: {e}")
+
+                st.markdown("---")
+                if st.button("🚨 Clear Fleet-Wide Filter Logs", use_container_width=True):
+                    try:
+                        supabase.table("hydraulic_filters").update({
+                            "history_log": ""
+                        }).neq("id", 0).execute()
+                        st.warning("All hydraulic filter logs across the entire fleet have been cleared.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to clear fleet logs: {e}")
 
     elif admin_password != "":
         st.error("Incorrect Password.")
